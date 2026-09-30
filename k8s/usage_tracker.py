@@ -6,6 +6,8 @@ separate from JupyterHub's own database schema.
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import sqlite3
 import time
@@ -30,6 +32,12 @@ def _connect(path=DB_PATH):
     db.execute(
         "CREATE INDEX IF NOT EXISTS sessions_user_started "
         "ON sessions (username, started)"
+    )
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS budget_overrides (
+            username TEXT PRIMARY KEY,
+            limit_usd REAL NOT NULL CHECK (limit_usd > 0)
+        )"""
     )
     return db
 
@@ -66,6 +74,47 @@ def open_sessions(path=DB_PATH):
         ).fetchall()
 
 
+def estimated_cost(username, hourly_usd, now=None, path=DB_PATH):
+    """Return the unrounded all-time estimate, including running sessions."""
+    now = time.time() if now is None else now
+    with _connect(path) as db:
+        intervals = db.execute(
+            "SELECT started, stopped FROM sessions WHERE username = ?", (username,)
+        ).fetchall()
+    seconds = sum(max(0.0, (now if stopped is None else min(stopped, now)) - started)
+                  for started, stopped in intervals)
+    return seconds * hourly_usd / 3600
+
+
+def budget_overrides(path=DB_PATH):
+    with _connect(path) as db:
+        return dict(db.execute("SELECT username, limit_usd FROM budget_overrides"))
+
+
+def set_budget_override(username, limit_usd, path=DB_PATH):
+    if not isinstance(username, str) or not username:
+        raise ValueError("username is required")
+    with _connect(path) as db:
+        if limit_usd is None:
+            db.execute("DELETE FROM budget_overrides WHERE username = ?", (username,))
+            return
+        if isinstance(limit_usd, bool):
+            raise ValueError("limit_usd must be a positive dollar amount")
+        try:
+            limit = float(limit_usd)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit_usd must be a positive dollar amount") from exc
+        if not math.isfinite(limit) or limit < 0.01 or round(limit, 2) < 0.01:
+            raise ValueError("limit_usd must be at least $0.01")
+        if abs(limit - round(limit, 2)) > 1e-8:
+            raise ValueError("limit_usd must have at most two decimal places")
+        db.execute(
+            "INSERT INTO budget_overrides (username, limit_usd) VALUES (?, ?) "
+            "ON CONFLICT(username) DO UPDATE SET limit_usd = excluded.limit_usd",
+            (username, round(limit, 2)),
+        )
+
+
 def summarize(usernames, hourly_usd, now=None, path=DB_PATH):
     now = time.time() if now is None else now
     cutoff = now - WINDOW_SECONDS
@@ -97,7 +146,7 @@ def summarize(usernames, hourly_usd, now=None, path=DB_PATH):
 
 
 def configure(c):
-    """Install a tracked KubeSpawner and an admin-scoped read-only JSON endpoint."""
+    """Install tracked spawning, a student budget, and admin usage endpoints."""
     from jupyterhub import orm
     from jupyterhub.handlers.base import BaseHandler
     from jupyterhub.scopes import needs_scope
@@ -105,16 +154,38 @@ def configure(c):
     from tornado import web
 
     hourly_usd = float(os.environ.get("TPU_HOURLY_USD", "1.35"))
-    if not 0 <= hourly_usd < float("inf"):
+    if not math.isfinite(hourly_usd) or hourly_usd < 0:
         raise ValueError("TPU_HOURLY_USD must be a finite non-negative number")
+    default_budget = float(os.environ.get("STUDENT_TPU_BUDGET_USD", "150"))
+    if not math.isfinite(default_budget) or default_budget <= 0:
+        raise ValueError("STUDENT_TPU_BUDGET_USD must be a finite positive number")
 
     class UsageKubeSpawner(KubeSpawner):
         async def start(self):
+            if not self.user.admin:
+                try:
+                    spent = estimated_cost(self.user.name, hourly_usd)
+                    limit = budget_overrides().get(self.user.name, default_budget)
+                except Exception as exc:
+                    self.log.exception("Could not check TPU budget for %s", self.user.name)
+                    raise web.HTTPError(503, "TPU budget check is unavailable; please try again later") from exc
+                if spent >= limit:
+                    raise web.HTTPError(
+                        403,
+                        f"Your estimated TPU usage has reached your ${limit:.2f} limit. "
+                        "Please contact course staff to request an increase.",
+                    )
             result = await super().start()
             try:
                 record_start(self.user.name, self.name)
-            except Exception:
+            except Exception as exc:
                 self.log.exception("Could not record TPU usage start for %s", self.user.name)
+                if not self.user.admin:
+                    try:
+                        await super().stop(now=True)
+                    except Exception:
+                        self.log.exception("Could not stop untracked TPU server for %s", self.user.name)
+                    raise web.HTTPError(503, "TPU usage tracking is unavailable; please try again later") from exc
             return result
 
         async def stop(self, now=False):
@@ -129,6 +200,8 @@ def configure(c):
         @web.authenticated
         @needs_scope("admin-ui")
         def get(self):
+            if not self.current_user.admin:
+                raise web.HTTPError(403)
             # Reconcile intervals left open by a Hub restart or an external pod
             # deletion. The observation time is the best stop time available.
             now = time.time()
@@ -137,16 +210,59 @@ def configure(c):
                 spawner = user.spawners.get(server_name) if user else None
                 if spawner is None or not spawner.active:
                     record_stop(username, server_name, at=now)
-            usernames = [name for (name,) in self.db.query(orm.User.name).all()]
+            users = self.db.query(orm.User.name, orm.User.admin).all()
+            overrides = budget_overrides()
+            rows = summarize([name for name, _ in users], hourly_usd, now=now)
+            admins = {name for name, admin in users if admin}
+            for row in rows:
+                name = row["username"]
+                limit = overrides.get(name, default_budget)
+                row["budget_exempt"] = name in admins
+                row["budget_override_usd"] = overrides.get(name)
+                row["budget_limit_usd"] = limit
+                row["budget_remaining_usd"] = round(max(0.0, limit - estimated_cost(name, hourly_usd, now=now)), 2)
             self.set_header("Cache-Control", "no-store")
             self.set_header("Content-Type", "application/json")
             self.write(
                 {
                     "hourly_usd": hourly_usd,
-                    "rows": summarize(usernames, hourly_usd, now=now),
+                    "budget_usd": default_budget,
+                    "rows": rows,
                 }
             )
 
+    class UsageLimitHandler(BaseHandler):
+        @web.authenticated
+        @needs_scope("admin:users")
+        def post(self):
+            if not self.current_user.admin:
+                raise web.HTTPError(403)
+            try:
+                payload = json.loads(self.request.body)
+            except (ValueError, TypeError) as exc:
+                raise web.HTTPError(400, "Invalid JSON") from exc
+            if not isinstance(payload, dict):
+                raise web.HTTPError(400, "Expected a JSON object")
+            username = payload.get("username")
+            if not isinstance(username, str) or not username:
+                raise web.HTTPError(400, "username is required")
+            user = self.db.query(orm.User).filter_by(name=username).one_or_none()
+            if user is None:
+                raise web.HTTPError(404, "Hub user does not exist")
+            if user.admin:
+                raise web.HTTPError(400, "Administrators are exempt")
+            try:
+                set_budget_override(username, payload["limit_usd"])
+            except KeyError as exc:
+                raise web.HTTPError(400, "limit_usd is required") from exc
+            except ValueError as exc:
+                raise web.HTTPError(400, str(exc)) from exc
+            self.set_header("Cache-Control", "no-store")
+            self.write({"username": username, "budget_limit_usd": budget_overrides().get(username, default_budget)})
+
     c.JupyterHub.spawner_class = UsageKubeSpawner
-    c.JupyterHub.extra_handlers = [(r"/admin/usage", UsageHandler)]
+    c.JupyterHub.extra_handlers = [
+        (r"/admin/usage/limit", UsageLimitHandler),
+        (r"/admin/usage", UsageHandler),
+    ]
     c.JupyterHub.template_paths = ["/usr/local/share/jupyterhub/custom_templates"]
