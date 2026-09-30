@@ -53,6 +53,29 @@ It provisions a real TPU node and incurs usage charges while it runs.
 make iap
 ```
 
+For the current LLM Systems deployment, set `DOMAIN=llmsys11868.duckdns.org`
+and `HUB_CERT_NAME=hub-cert-duckdns` in the ignored `config.env` file.
+
 Configure the OAuth branding screen for the project when the script prompts you. Wait for the Google-managed certificate to become active. Open the IAP URL printed by the script, sign in once with a student account and once with a TA account, and start a notebook for each. Open `hw0_tpu_hello.ipynb` and run its first cell; it must show a TPU device. This browser check confirms JupyterHub spawning as well as TPU access.
 
-Stop both test servers from the JupyterHub control panel when finished. Closing a browser tab does not immediately release its TPU.
+To change the hostname of an existing Hub, first point the new name's A record at
+the Ingress static IP and verify it with `dig +short YOUR_DOMAIN`. Set `DOMAIN` in
+`config.env` and give `HUB_CERT_NAME` a new Kubernetes resource name, then run
+`make iap`. The script attaches the new certificate alongside the current one.
+Wait until the new certificate is `Active` **and** `curl -I https://YOUR_DOMAIN/`
+completes without a certificate error. The IAP response can be 401 before sign-in.
+Only then detach and delete the old certificate; changing an existing certificate's
+domain in place can interrupt HTTPS. Future `make iap` runs retain the currently
+attached certificate names, so remove the old name from the Ingress annotation
+after the new hostname works.
+
+With the correct GKE context selected, replace the two certificate names below
+with your old and new resource names:
+
+```bash
+kubectl -n llmsys annotate ingress hub-ingress \
+  networking.gke.io/managed-certificates=NEW_CERT_NAME --overwrite
+kubectl -n llmsys delete managedcertificate OLD_CERT_NAME
+```
+
+Save your notebook, then click **Stop TPU Server** in JupyterLab's top bar. It stops the TPU server and signs out of JupyterHub; the home volume persists. Closing a tab does not immediately release the TPU. Browser close events can be missed, and a refresh or another open tab should not terminate a running computation. The 30-minute inactivity culler remains the fallback; a silent long-running cell can still be culled, so checkpoint long jobs.

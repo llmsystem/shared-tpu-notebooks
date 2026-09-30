@@ -31,6 +31,8 @@
 # Placeholders filled by scripts/08_setup_iap.sh:
 #   __DOMAIN__      <static-ip>.nip.io
 #   __NAMESPACE__   the hub namespace
+#   __CERT_NAME__   managed certificate resource for the requested domain
+#   __CERT_NAMES__  current and new managed certificate resources during migration
 ---
 apiVersion: cloud.google.com/v1
 kind: BackendConfig
@@ -58,7 +60,7 @@ spec:
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
-  name: hub-cert
+  name: __CERT_NAME__
   namespace: __NAMESPACE__
 spec:
   domains:
@@ -72,7 +74,7 @@ metadata:
   annotations:
     kubernetes.io/ingress.class: "gce"
     kubernetes.io/ingress.global-static-ip-name: tpu-notebooks-ip
-    networking.gke.io/managed-certificates: hub-cert
+    networking.gke.io/managed-certificates: __CERT_NAMES__
     # IAP needs HTTPS. Leave HTTP enabled so the managed certificate can complete its
     # HTTP-01 style validation; once the cert is ACTIVE you can set this to "true".
     kubernetes.io/ingress.allow-http: "true"

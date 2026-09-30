@@ -14,6 +14,9 @@ hub:
   config:
     JupyterHub:
       admin_access: true
+      # JupyterLab's Stop TPU Server button uses the built-in Hub logout action.
+      # Stopping the user's server during logout releases its TPU immediately.
+      shutdown_on_logout: true
     Authenticator:
       # Local part of the Google identity IAP forwards, i.e. everything before the @.
       admin_users:
@@ -284,6 +287,22 @@ singleuser:
   # The starter notebook is copied into each new home volume without replacing
   # student edits on later spawns.
   extraFiles:
+    stop-tpu-toolbar.json:
+      mountPath: /opt/conda/share/jupyter/lab/settings/overrides.json
+      stringData: |
+        {
+          "@jupyterlab/application-extension:top-bar": {
+            "toolbar": [
+              {
+                "name": "stop-tpu-server",
+                "command": "hub:logout",
+                "label": "Stop TPU Server",
+                "caption": "Stop your TPU server and sign out of JupyterHub. Save your work first.",
+                "rank": 100
+              }
+            ]
+          }
+        }
     hw0_tpu_hello.ipynb:
       mountPath: /opt/course/hw0_tpu_hello.ipynb
       stringData: "placeholder, replaced at deploy time"
