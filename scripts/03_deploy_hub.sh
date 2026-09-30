@@ -26,6 +26,7 @@ VALUES="$(dirname "$0")/../k8s/jupyterhub-values.yaml"
 IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT}/course-images/scipy-notebook"
 IMAGE_TAG="latest"
 TPU_HOURLY_USD="${TPU_HOURLY_USD:-1.35}"
+STUDENT_TPU_BUDGET_USD="${STUDENT_TPU_BUDGET_USD:-150}"
 
 ADMIN_USERS="${ADMIN_USERS:-instructor}"
 ADMIN_LIST=()
@@ -44,6 +45,7 @@ helm upgrade --install "${RELEASE}" jupyterhub/jupyterhub \
   --set singleuser.image.name="${IMAGE_NAME}" \
   --set singleuser.image.tag="${IMAGE_TAG}" \
   --set-string hub.extraEnv.TPU_HOURLY_USD="${TPU_HOURLY_USD}" \
+  --set-string hub.extraEnv.STUDENT_TPU_BUDGET_USD="${STUDENT_TPU_BUDGET_USD}" \
   --set "hub.config.Authenticator.admin_users={${ADMIN_STR}}" \
   --set-file "hub.extraFiles.usageTrackerPy.stringData=$(dirname "$0")/../k8s/usage_tracker.py" \
   --set-file "hub.extraFiles.adminUsageTemplate.stringData=$(dirname "$0")/../k8s/admin-usage.html" \

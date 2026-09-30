@@ -27,6 +27,26 @@ including idle time. It does not reproduce a Cloud Billing invoice: persistent h
 disks, shared Hub resources, network traffic, discounts, and taxes are excluded.
 Only Hub administrators can read the usage endpoint.
 
+## Per-student start limit
+
+By default, a student cannot start a new TPU notebook server once their all-time
+tracked TPU estimate reaches **$150**. Set `STUDENT_TPU_BUDGET_USD` in `config.env`
+to change this default for all students, then run `make hub`. The check uses the
+unrounded estimate, including time from currently running servers. Hub admins are
+exempt. An existing server is not stopped when the estimate crosses the limit.
+
+On the Hub **Admin** page, use **Save** in a student's budget column to set an
+individual limit, or **Reset** to return that student to the configured default.
+The individual limits persist in the Hub's usage SQLite database on its PVC and
+survive Hub redeployments. The admin API requires admin privileges; a student
+cannot change their own limit. If the usage ledger cannot be read or a new start
+cannot be recorded, a student spawn is refused until tracking works again.
+
+This is a course access control based on the configured hourly estimate, not a
+hard Cloud Billing cap. Changing `TPU_HOURLY_USD` recalculates past tracked time
+at the new rate. Prior untracked use and other GCP charges are excluded. Keep
+the separate project billing alerts enabled to monitor actual spending.
+
 ## End-of-term cleanup
 
 ```bash
