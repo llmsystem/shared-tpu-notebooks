@@ -30,6 +30,8 @@ The student and TA groups get the same notebook profile. IAP controls who can re
 
 Each open notebook consumes one v5e chip and one TPU node until the server stops. `MAX_TPU_NOTEBOOKS` is a Kubernetes cap, not a reservation or a guarantee of available hardware. The quota in [scripts/02_create_cluster.sh](scripts/02_create_cluster.sh) also allows 100 Pods, 40 PVCs, and 1 TiB of requested storage; raise those values before enrolling a larger class. Each new user home volume is 32 GiB and persists after the notebook stops.
 
+The JupyterHub **Admin** page includes per-user TPU hours and estimated cost for the last 30 days and all tracked time. Set `TPU_HOURLY_USD` in `config.env` to the effective chip-hour rate. Tracking starts after the updated Hub is deployed; see [cost management](docs/cost_management.md) for the estimate's scope.
+
 Use `make clean-pvcs-dry-run` to inspect retained home volumes and `make clean-pvcs` only when their contents can be deleted. `make teardown` removes the cluster and static IP. See [cost management](docs/cost_management.md) for the cost behavior of attached notebooks.
 
 ## Repository layout

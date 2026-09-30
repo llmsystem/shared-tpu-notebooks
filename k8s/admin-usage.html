@@ -1,0 +1,79 @@
+{% extends "templates/admin.html" %}
+
+{% block main %}
+{{ super() }}
+<section class="container my-4" aria-labelledby="usage-heading">
+  <h2 id="usage-heading">TPU usage by user</h2>
+  <p id="usage-note" class="text-body-secondary">
+    Notebook server hours, including idle time. Estimated TPU cost excludes storage,
+    shared Hub resources, taxes, discounts, and other Cloud Billing adjustments.
+    Tracking begins when this feature is deployed.
+  </p>
+  <div class="table-responsive">
+    <table class="table table-striped table-sm" id="usage-table">
+      <thead>
+        <tr>
+          <th scope="col">User</th>
+          <th scope="col" class="text-end">Running servers</th>
+          <th scope="col" class="text-end">Hours, last 30 days</th>
+          <th scope="col" class="text-end">Est. TPU cost, last 30 days</th>
+          <th scope="col" class="text-end">Hours, all time</th>
+          <th scope="col" class="text-end">Est. TPU cost, all time</th>
+        </tr>
+      </thead>
+      <tbody><tr><td colspan="6">Loading usage…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+{% endblock main %}
+
+{% block script %}
+{{ super() }}
+<script>
+(() => {
+  const body = document.querySelector('#usage-table tbody');
+  const note = document.querySelector('#usage-note');
+  const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const hours = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+  fetch(`${window.jhdata.base_url}admin/usage`, { credentials: 'same-origin', cache: 'no-store' })
+    .then(response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then(data => {
+      note.append(` Rate: ${money.format(data.hourly_usd)} per TPU chip-hour.`);
+      body.replaceChildren();
+      if (!data.rows.length) {
+        const cell = document.createElement('td');
+        cell.colSpan = 6;
+        cell.textContent = 'No Hub users yet.';
+        const tr = document.createElement('tr');
+        tr.append(cell);
+        body.append(tr);
+      }
+      for (const row of data.rows) {
+        const tr = document.createElement('tr');
+        const values = [
+          row.username,
+          row.active,
+          hours.format(row.hours_30d),
+          money.format(row.cost_30d_usd),
+          hours.format(row.hours_all),
+          money.format(row.cost_all_usd),
+        ];
+        values.forEach((value, index) => {
+          const cell = document.createElement(index === 0 ? 'th' : 'td');
+          if (index === 0) cell.scope = 'row';
+          else cell.className = 'text-end';
+          cell.textContent = value;
+          tr.append(cell);
+        });
+        body.append(tr);
+      }
+    })
+    .catch(() => {
+      body.firstElementChild.firstElementChild.textContent = 'Could not load usage. Check Hub logs.';
+    });
+})();
+</script>
+{% endblock script %}

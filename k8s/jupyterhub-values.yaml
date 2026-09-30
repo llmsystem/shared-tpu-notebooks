@@ -11,6 +11,14 @@ hub:
   db:
     pvc:
       storage: 32Gi
+  # Mounted at deploy time from the checked-in files by scripts/03_deploy_hub.sh.
+  extraFiles:
+    usageTrackerPy:
+      mountPath: /usr/local/etc/jupyterhub/usage_tracker.py
+      stringData: "placeholder, replaced at deploy time"
+    adminUsageTemplate:
+      mountPath: /usr/local/share/jupyterhub/custom_templates/admin.html
+      stringData: "placeholder, replaced at deploy time"
   config:
     JupyterHub:
       admin_access: true
@@ -43,6 +51,11 @@ hub:
   # trusting the email header. The header is sufficient here because the only path in
   # is the IAP-protected one.
   extraConfig:
+    usage-tracking: |
+      import sys
+      sys.path.insert(0, "/usr/local/etc/jupyterhub")
+      from usage_tracker import configure
+      configure(c)
     cmu-branding: |
       c.JupyterHub.template_vars = {
           'announcement': (
