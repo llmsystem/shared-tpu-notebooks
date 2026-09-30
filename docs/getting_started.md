@@ -78,4 +78,4 @@ kubectl -n llmsys annotate ingress hub-ingress \
 kubectl -n llmsys delete managedcertificate OLD_CERT_NAME
 ```
 
-Save your notebook, then click **Stop TPU Server** in JupyterLab's top bar. It stops the TPU server and signs out of JupyterHub; the home volume persists. Closing a tab does not immediately release the TPU. Browser close events can be missed, and a refresh or another open tab should not terminate a running computation. The 30-minute inactivity culler remains the fallback; a silent long-running cell can still be culled, so checkpoint long jobs.
+Save your notebook, then click the red **Stop TPU Server** button in JupyterLab's top bar. It stops the TPU server and returns to Hub home without spawning another server; the home volume persists. Closing a tab does not immediately release the TPU. Browser close events can be missed, and a refresh or another open tab should not terminate a running computation. The 30-minute inactivity culler remains the fallback; a silent long-running cell can still be culled, so checkpoint long jobs.
