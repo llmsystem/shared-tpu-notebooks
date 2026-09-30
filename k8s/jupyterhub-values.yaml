@@ -22,6 +22,9 @@ hub:
   config:
     JupyterHub:
       admin_access: true
+      # JupyterLab's stop button reaches the Hub logout handler, which stops the
+      # server before the IAP authenticator returns the user to /hub/home.
+      shutdown_on_logout: true
     Authenticator:
       # Local part of the Google identity IAP forwards, i.e. everything before the @.
       admin_users:
@@ -76,9 +79,10 @@ hub:
       import json
       import urllib.request
       from jupyterhub.auth import Authenticator
-      from jupyterhub.handlers.login import LoginHandler
+      from jupyterhub.handlers.login import LoginHandler, LogoutHandler
       from jupyterhub.utils import url_path_join
       from tornado import web
+      from tornado.httputil import url_concat
 
       IAP_JWT_HEADER = "X-Goog-IAP-JWT-Assertion"
       IAP_EMAIL_HEADER = "X-Goog-Authenticated-User-Email"
@@ -162,14 +166,28 @@ hub:
               username = email.split("@")[0]
               user = await self.auth_to_user({"name": username})
               self.set_login_cookie(user)
-              self.redirect(url_path_join(self.hub.server.base_url, "spawn"))
+              # Honor a safe 'next' path so a completed stop returns to Hub home
+              # without immediately spawning another TPU notebook.
+              self.redirect(self.get_next_url(user))
+
+      class IAPLogoutHandler(LogoutHandler):
+          async def render_logout_page(self):
+              # LogoutHandler has already awaited server shutdown here. IAP will
+              # authenticate the next request again; preserve /hub/home as its
+              # destination so this stop action never restarts the TPU.
+              home_url = url_path_join(self.hub.server.base_url, "home")
+              login_url = url_path_join(self.hub.server.base_url, "login")
+              self.redirect(url_concat(login_url, {"next": home_url}))
 
       class IAPAuthenticator(Authenticator):
           # No login form. The user already signed in at the load balancer.
           auto_login = True
 
           def get_handlers(self, app):
-              return [(r"/login", IAPLoginHandler)]
+              return [
+                  (r"/login", IAPLoginHandler),
+                  (r"/logout", IAPLogoutHandler),
+              ]
 
           async def authenticate(self, handler, data=None):
               return None
@@ -286,6 +304,13 @@ singleuser:
     capacity: 32Gi
     dynamic:
       storageClass: standard-rwo-retain
+    # The chart's "files" Secret contains custom.css. Mounting it as a directory
+    # creates Jupyter Server's bundled static/custom path without rebuilding the
+    # course image. JupyterLab serves /custom/custom.css from that path.
+    extraVolumeMounts:
+      - name: files
+        mountPath: /opt/conda/lib/python3.12/site-packages/jupyter_server/static/custom
+        readOnly: true
   # Keep active notebooks above optional batch or warm-pool workloads.
   extraPodConfig:
     priorityClassName: student-notebook
@@ -297,6 +322,60 @@ singleuser:
   # The starter notebook is copied into each new home volume without replacing
   # student edits on later spawns.
   extraFiles:
+    stop-tpu-css-config.py:
+      mountPath: /opt/conda/etc/jupyter/jupyter_server_config.py
+      stringData: |
+        c.LabApp.custom_css = True
+    custom.css:
+      # The chart also mounts this individual Secret key as a file; the full
+      # Secret is mounted at static/custom above to serve it at the correct URL.
+      mountPath: /opt/conda/etc/jupyter/custom.css
+      stringData: |
+        #jp-top-bar [data-jp-item-name="stop-tpu-server"] {
+          align-items: center;
+          align-self: stretch;
+          display: flex;
+          margin-left: 12px;
+        }
+        #jp-top-bar [data-jp-item-name="stop-tpu-server"] .jp-ToolbarButtonComponent {
+          background: #C41230 !important;
+          border: 1px solid #8A001A !important;
+          border-radius: 5px !important;
+          color: #FFFFFF !important;
+          font-weight: 700 !important;
+          height: 24px;
+          min-height: 24px;
+          padding: 0 12px !important;
+        }
+        #jp-top-bar [data-jp-item-name="stop-tpu-server"] .jp-ToolbarButtonComponent-label {
+          color: #FFFFFF !important;
+          display: inline !important;
+          font-size: 13px;
+          font-weight: 700;
+        }
+        #jp-top-bar [data-jp-item-name="stop-tpu-server"] .jp-ToolbarButtonComponent:hover {
+          background: #8A001A !important;
+        }
+        #jp-top-bar [data-jp-item-name="stop-tpu-server"] .jp-ToolbarButtonComponent:focus-visible {
+          outline: 2px solid #8A001A !important;
+          outline-offset: 2px;
+        }
+    stop-tpu-toolbar.json:
+      mountPath: /opt/conda/share/jupyter/lab/settings/overrides.json
+      stringData: |
+        {
+          "@jupyterlab/application-extension:top-bar": {
+            "toolbar": [
+              {
+                "name": "stop-tpu-server",
+                "command": "hub:logout",
+                "label": "Stop TPU Server",
+                "caption": "Save your work, stop the TPU server, and return to Hub home.",
+                "rank": 100
+              }
+            ]
+          }
+        }
     hw0_tpu_hello.ipynb:
       mountPath: /opt/course/hw0_tpu_hello.ipynb
       stringData: "placeholder, replaced at deploy time"

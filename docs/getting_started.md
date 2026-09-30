@@ -55,4 +55,4 @@ make iap
 
 Configure the OAuth branding screen for the project when the script prompts you. Wait for the Google-managed certificate to become active. Open the IAP URL printed by the script, sign in once with a student account and once with a TA account, and start a notebook for each. Open `hw0_tpu_hello.ipynb` and run its first cell; it must show a TPU device. This browser check confirms JupyterHub spawning as well as TPU access.
 
-Stop both test servers from the JupyterHub control panel when finished. Closing a browser tab does not immediately release its TPU.
+Save your notebook, then click the red **Stop TPU Server** button in JupyterLab's top bar. It stops the TPU server and returns to Hub home without spawning another server; the home volume persists. Closing a tab does not immediately release the TPU. The 30-minute inactivity culler remains the fallback; checkpoint long jobs because a silent running cell can still be culled.
