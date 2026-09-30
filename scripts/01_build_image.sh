@@ -3,9 +3,8 @@
 # Script: 01_build_image.sh
 # Description: Build and push the custom course Docker image.
 #
-# We inherit from the standard scipy-notebook and bake in the kubernetes client.
-# This saves several seconds on every student pod's cold start compared to running
-# a pip install in a postStart lifecycle hook.
+# The image extends scipy-notebook with JAX TPU dependencies so both course
+# groups can run TPU code directly in JupyterLab.
 #
 # Usage:
 #   make image
@@ -65,13 +64,11 @@ fi
 echo "==> configuring docker auth for Artifact Registry"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-echo "==> building image ${IMAGE}"
-docker build -t "${IMAGE}" "$(dirname "$0")/../docker"
+echo "==> building linux/amd64 image ${IMAGE} for GKE TPU nodes"
+docker build --platform linux/amd64 -t "${IMAGE}" "$(dirname "$0")/../docker"
 
 echo "==> pushing image"
 docker push "${IMAGE}"
 
 echo
-echo "Done. The hub is configured to use this image by default via IMAGE_NAME."
-echo "If IMAGE_NAME is not set, be sure to update k8s/jupyterhub-values.yaml to point to:"
-echo "    ${IMAGE}"
+echo "Done. make hub uses this image for every student and TA notebook."

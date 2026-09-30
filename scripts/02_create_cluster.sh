@@ -1,27 +1,17 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script: 02_create_cluster.sh
-# Description: Stand up the classroom substrate: Autopilot cluster, Kueue,
-#              StorageClasses, PriorityClasses, and ResourceQuotas.
-# Idempotent -- safe to re-run.
-#
-# Why Autopilot instead of Standard:
-# Autopilot provisions a ct5lp-hightpu-1t node per TPU pod from the two
-# nodeSelector labels and scales back to zero when the pod ends. Standard would
-# need a node pool per topology plus the cluster autoscaler, which hard-fails
-# on GCE_STOCKOUT during atomic resizes, whereas Kueue queues until capacity
-# becomes available.
-#
-# Billing:
-# A TPU pod is node-billed on Autopilot (24 vCPU / 48 GiB node for as long as
-# the pod lives). That is why student TPU work is a short Job, not an open
-# notebook.
+# Description: Create the GKE Autopilot cluster, namespace, storage, priorities,
+#              and a concurrent TPU notebook quota. Safe to re-run.
 # ==============================================================================
 source "$(dirname "$0")/common.sh"
 require_project
 check_prereqs gcloud kubectl
 
-KUEUE_VERSION="${KUEUE_VERSION:-v0.19.1}"
+if [[ ! "${MAX_TPU_NOTEBOOKS}" =~ ^[1-9][0-9]*$ ]]; then
+  log_error "MAX_TPU_NOTEBOOKS must be a positive integer."
+  exit 1
+fi
 
 log_header "Provisioning GKE Autopilot Cluster '${CLUSTER}' in '${REGION}'"
 if ! gcloud container clusters describe "${CLUSTER}" --region="${REGION}" \
@@ -38,12 +28,8 @@ fi
 ensure_k8s_context
 K=(kubectl --context="${GKE_CTX}")
 
-# Guard against runaway log ingestion costs ($0.50/GiB). A student writing
-# `while True: print("hello")` can silently ingest terabytes of logs overnight.
-# This exclusion filter drops container stdout/stderr from student namespaces
-# before it reaches Cloud Logging billing. Logs from kube-system, the hub pod,
-# and other infrastructure namespaces are preserved.
-log_header "Configuring Log Exclusion Filter for Student Namespaces"
+# Drop noisy notebook stdout/stderr before Cloud Logging ingestion billing.
+log_header "Configuring Log Exclusion Filter for Student Notebooks"
 if ! gcloud logging sinks describe "_Default" --project="${PROJECT}" >/dev/null 2>&1; then
   log_warn "Could not verify default sink; skipping log exclusion."
 else
@@ -53,35 +39,16 @@ else
     2>/dev/null; then
     log_success "Log exclusion filter active for namespace '${NAMESPACE}'."
   else
-    log_info "Log exclusion filter already exists or updated."
+    log_info "Log exclusion filter already exists or could not be updated."
   fi
 fi
 
-log_header "Installing Kueue ${KUEUE_VERSION}"
-"${K[@]}" apply --server-side -f \
-  "https://github.com/kubernetes-sigs/kueue/releases/download/${KUEUE_VERSION}/manifests.yaml"
-
-log_info "Waiting for the Kueue controller to be available..."
-"${K[@]}" -n kueue-system wait --for=condition=Available deploy/kueue-controller-manager --timeout=600s
-
-# The webhook takes a few seconds past Available before it will accept CRs. Applying
-# a ClusterQueue too early fails with 'no endpoints available for service'.
-log_info "Waiting for the Kueue webhook to answer..."
-for i in $(seq 1 60); do
-  "${K[@]}" get clusterqueue >/dev/null 2>&1 && break
-  sleep 5
-done
-
-# Priority classes must exist before the hub is installed. 03_deploy_hub.sh references
-# jupyterhub-core and student-notebook, and Kubernetes rejects a pod whose
-# priorityClassName does not resolve. Applying these by hand during development and
-# forgetting to wire them in here is what broke `make hub` for a user.
-log_header "Applying PriorityClasses and ResourceFlavors"
+# JupyterHub refers to these classes before it starts its first pod.
+log_header "Applying PriorityClasses"
 "${K[@]}" apply -f "$(dirname "$0")/../k8s/priority-classes.yaml"
-"${K[@]}" apply -f "$(dirname "$0")/../k8s/kueue-tpu-queues.yaml"
 
 log_header "Configuring StorageClass (standard-rwo-retain)"
-"${K[@]}" apply -f - <<EOF
+"${K[@]}" apply -f - <<YAML
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -92,34 +59,10 @@ parameters:
 reclaimPolicy: Retain
 allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
-EOF
+YAML
 
-NFLAVORS=2
-PER=$(( POOL_CHIPS / NFLAVORS ))
-log_header "Configuring Kueue ClusterQueue & Namespace '${NAMESPACE}'"
-log_info "Capacity: ${POOL_CHIPS} chips across ${NFLAVORS} flavors (${PER} on-demand, ${PER} flex)."
-
-"${K[@]}" apply -f - <<EOF
-apiVersion: kueue.x-k8s.io/v1beta2
-kind: ClusterQueue
-metadata:
-  name: shared-tpu-pool
-spec:
-  cohortName: classroom
-  namespaceSelector: {}
-  queueingStrategy: BestEffortFIFO
-  resourceGroups:
-    - coveredResources: ["google.com/tpu"]
-      flavors:
-        - name: v5e-ondemand
-          resources:
-            - name: "google.com/tpu"
-              nominalQuota: ${PER}
-        - name: v5e-flex
-          resources:
-            - name: "google.com/tpu"
-              nominalQuota: ${PER}
----
+log_header "Configuring Namespace '${NAMESPACE}' and TPU notebook quota"
+"${K[@]}" apply -f - <<YAML
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -132,85 +75,11 @@ metadata:
   namespace: ${NAMESPACE}
 spec:
   hard:
-    count/jobs.batch: "60"
+    requests.google.com/tpu: "${MAX_TPU_NOTEBOOKS}"
     count/pods: "100"
     count/persistentvolumeclaims: "40"
-    # Sized for 25 student home volumes x 32Gi (800Gi) with 1Ti quota headroom
     requests.storage: "1Ti"
----
-apiVersion: kueue.x-k8s.io/v1beta2
-kind: LocalQueue
-metadata:
-  name: tpu
-  namespace: ${NAMESPACE}
-spec:
-  clusterQueue: shared-tpu-pool
-EOF
+YAML
 
-# ==============================================================================
-# MULTI-SECTION REFERENCE (For large cohorts requiring section-split queues)
-# ==============================================================================
-# If scaling beyond 50 students requires multiplexing namespaces again, revert
-# the above single-namespace block and uncomment the section loop below:
-#
-# SECTIONS="${SECTIONS:-a b c d}"
-# NSEC=$(echo "${SECTIONS}" | wc -w)
-# NFLAVORS=2
-# PER=$(( POOL_CHIPS / NSEC / NFLAVORS ))
-# log_info "${NSEC} sections x ${NFLAVORS} flavors x ${PER} chips = ${POOL_CHIPS} in the cohort"
-#
-# for S in ${SECTIONS}; do
-#   "${K[@]}" apply -f - <<EOF
-# apiVersion: kueue.x-k8s.io/v1beta2
-# kind: ClusterQueue
-# metadata:
-#   name: section-${S}
-# spec:
-#   cohortName: classroom
-#   namespaceSelector: {}
-#   queueingStrategy: BestEffortFIFO
-#   resourceGroups:
-#     - coveredResources: ["google.com/tpu"]
-#       flavors:
-#         - name: v5e-ondemand
-#           resources:
-#             - name: "google.com/tpu"
-#               nominalQuota: ${PER}
-#         - name: v5e-flex
-#           resources:
-#             - name: "google.com/tpu"
-#               nominalQuota: ${PER}
-# ---
-# apiVersion: v1
-# kind: Namespace
-# metadata:
-#   name: class-sec-${S}
-# ---
-# apiVersion: v1
-# kind: ResourceQuota
-# metadata:
-#   name: section-quota
-#   namespace: class-sec-${S}
-# spec:
-#   hard:
-#     count/jobs.batch: "250"
-#     count/pods: "500"
-#     count/persistentvolumeclaims: "100"
-#     requests.storage: "2Ti"
-# ---
-# apiVersion: kueue.x-k8s.io/v1beta2
-# kind: LocalQueue
-# metadata:
-#   name: tpu
-#   namespace: class-sec-${S}
-# spec:
-#   clusterQueue: section-${S}
-# EOF
-# done
-
-log_header "Cluster & Queue Status"
-"${K[@]}" get clusterqueue
-echo
-"${K[@]}" get localqueue -A
-echo
-log_success "Substrate ready. Shared pool has ${POOL_CHIPS} chips (${PER} on-demand, ${PER} flex)."
+"${K[@]}" -n "${NAMESPACE}" get resourcequota class-quota
+log_success "Direct TPU notebooks ready: at most ${MAX_TPU_NOTEBOOKS} concurrent chips."

@@ -31,9 +31,6 @@ scikit-learn==1.9.0
 # experiments, and reports.
 matplotlib==3.11.1
 
-# Infrastructure / Scripting
-kubernetes
-
 # ------------------------------------------------------------
 # General utilities
 # ------------------------------------------------------------

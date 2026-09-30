@@ -1,69 +1,22 @@
-# 💰 Cost Management & Budgeting
+# Cost management for attached TPU notebooks
 
-Running TPUs for hundreds of students can drain a budget rapidly if mismanaged. This repository is architected to keep costs below **$0.10 per student per session**.
+Each open student or TA JupyterLab Pod has one v5e TPU chip attached. The chip remains allocated while the server is running, including when the user is only reading or editing. Budget for the number of **simultaneously open notebooks**, not just the time spent executing code. Check current GCP pricing for the chosen region before deployment.
 
-## Where the Money Goes
+## Controls in this repository
 
-In a GKE Autopilot cluster, you pay for what pods *request*, not what the underlying VM nodes have.
+1. `MAX_TPU_NOTEBOOKS` becomes the namespace's `requests.google.com/tpu` ResourceQuota. One notebook requests one chip. When the cap is reached, another spawn is rejected; users are not placed in a Kueue queue.
+2. The JupyterHub idle culler stops servers after 30 minutes without activity and after a maximum age of eight hours. Check the culler behavior with real class workloads before changing these values.
+3. A user's 32 GiB home volume persists after the server stops. This retains work but continues to incur disk storage charges.
+4. `make smoke` deletes its short-lived TPU test Pod after the check finishes.
 
-1. **The Notebook Pod (CPU):** A 2 vCPU, 16 GiB RAM pod with a 32 GiB home disk.
-2. **The TPU Job:** A `ct5lp-hightpu-1t` node carrying 1x v5e chip.
-3. **Cluster Management Fee:** $0.10/hour per cluster.
+Users should stop their server from the JupyterHub control panel when they finish. Closing the browser tab alone may leave a TPU allocated until culling.
 
-### Spot vs. On-Demand Pricing
-
-We aggressively use Spot VMs for the Jupyter notebooks.
-
-| Resource | On-Demand (Hourly) | Spot (Hourly) | Savings |
-| :--- | :--- | :--- | :--- |
-| **Notebook (2 vCPU, 16 GiB)** | ~$0.16 | **~$0.06** | ~63% |
-| **TPU v5e Chip** | $1.20 | $0.36 | ~70% |
-
-*Note: The TPU pool defaults to On-Demand via DWS Flex because Spot TPUs can be preempted mid-execution, frustrating students. Notebooks, however, can handle preemption transparently since data is backed by Persistent Volumes.*
-
-## Automated Cost-Saving Mechanisms
-
-### 1. Idle Culler
-
-Students frequently forget to close browser tabs. The `jupyterhub-values.yaml` is configured with an aggressive culler:
-
-```yaml
-cull:
-  enabled: true
-  timeout: 3600    # Cull if idle for 60 minutes
-  every: 300       # Check every 5 minutes
-  maxAge: 28800    # Hard kill after 8 hours, even if active
-```
-
-### 2. Ephemeral TPU Execution
-
-Because TPUs are invoked via the `submit_tpu.run()` Python client, the student only bills the TPU for the *exact seconds* their matrix multiplication is running.
-
-```mermaid
-pie title "Cost Distribution (1 Hour Session)"
-    "TPU Execution (1 min)" : 2
-    "Idle TPU (Saved!)" : 0
-    "Spot Notebook (1 hr)" : 6
-```
-*(Y-axis is in cents)*
-
-### 3. The Warm Pool Guardrail
-
-Instructors can hold a "warm" TPU node via `make warm-on WARM=1` to prevent cold-starts during a live lecture. Because a warm node bills $1.35/hour constantly, we have a failsafe:
-
-The `tpu-warm-pool.yaml` manifest includes a `CronJob` that executes `kubectl scale deployment tpu-warm-pool --replicas=0` every day at **22:00 UTC**. If you forget to run `make warm-off`, the cluster shuts it off for you.
-
-## End of Term Cleanup
-
-Persistent Volumes (student home directories) bill perpetually until deleted. To stop all billing at the end of the term:
+## End-of-term cleanup
 
 ```bash
-# Preview what will be deleted
-make clean-pvcs-dry-run
-
-# Execute the deletion
-make clean-pvcs
-
-# Destroy the cluster completely
-make teardown
+make clean-pvcs-dry-run  # inspect retained home volumes
+make clean-pvcs          # delete them when their contents are no longer needed
+make teardown            # delete the cluster and static IP
 ```
+
+The retained queued-Job prototype and warm-pool scripts are not part of the direct-notebook deployment path.

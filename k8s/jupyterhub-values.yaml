@@ -4,23 +4,8 @@
 # This configuration enforces strict Pod Security Standards, non-root execution,
 # NetworkPolicies for isolation, and gVisor sandboxing for untrusted notebooks.
 #
-# Read the profile list first. It contains the reason for the design.
-#
-# GKE gives one pod per TPU node and that pod owns every chip on the node. A v5e chip
-# cannot be shared. A TPU-backed notebook therefore holds a $1.35/hr chip for as long as
-# the browser tab is open, whether the student is running code or reading the
-# assignment. For 300 students that is $405/hr, and most of them are typing.
-#
-# So students get a CPU notebook, and TPU work leaves the notebook as a queued Job
-# (see notebooks/submit_tpu.py). The chip is held for the seconds the job runs.
-#
-# The pinned TPU notebook still exists, because interactive TPU debugging is a real
-# need. It is restricted to staff. That restriction is the cost control.
-#
-# Pattern credit: ai-on-gke/quick-start-guides jupyter/profiles.md documents
-# extra_resource_limits + node_selector for TPU profiles. Its template hardcodes
-# ct4p-hightpu-4t / tpu-v4-podslice / 2x2x1 -- v4, which is us-central2-only and not
-# reachable from an ordinary project. The labels below are the v5e equivalent.
+# Every student and TA gets one v5e chip in the notebook pod. A chip remains
+# allocated for the lifetime of that pod, so the idle culler is important.
 
 hub:
   db:
@@ -64,16 +49,12 @@ hub:
               '<div style="background: linear-gradient(135deg, #C41230 0%, #8A001A 100%); '
               'color: #FFFFFF; padding: 12px 18px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); '
               'font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; '
-              'margin-bottom: 16px; font-size: 14px; line-height: 1.5; display: flex; align-items: center; justify-content: space-between;">'
-              '<span><strong>🎓 Carnegie Mellon University — 11-785 Introduction to Deep Learning</strong> | '
-              'Cloud TPU v5e Shared Accelerator Hub &bull; Prof. Bhiksha Raj &amp; Prof. Rita Singh</span>'
-              '<a href="https://deeplearning.cs.cmu.edu/" target="_blank" '
-              'style="color: #FFFFFF; background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 4px; '
-              'text-decoration: none; font-size: 12px; font-weight: 600; margin-left: 12px; white-space: nowrap;">'
-              'Course Home &rarr;</a>'
+              'margin-bottom: 16px; font-size: 14px; line-height: 1.5;">'
+              '<strong>🎓 Carnegie Mellon University — 11-868 LLM Systems</strong> | '
+              'Cloud TPU v5e Notebook Hub'
               '</div>'
           ),
-          'hub_title': 'CMU 11-785 Deep Learning Hub',
+          'hub_title': 'CMU 11-868 LLM Systems Hub',
       }
       c.JupyterHub.admin_access = True
     iap-auth: |
@@ -240,9 +221,9 @@ prePuller:
 
 cull:
   enabled: true
-  # A student who closes the laptop should not hold a pod all night. One hour idle,
-  # checked every five minutes. maxAge 12h catches the tab left open over a weekend.
-  timeout: 3600
+  # Release the attached TPU after 30 minutes of inactivity. The eight-hour
+  # maximum stops a forgotten session even when it still reports activity.
+  timeout: 1800
   every: 300
   maxAge: 28800
 
@@ -277,93 +258,35 @@ singleuser:
   cloudMetadata:
     blockWithIptables: false
 
-  # z2jh puts a NetworkPolicy on singleuser pods that denies egress to private IP
-  # ranges. That is a good default and it breaks this design, because submit_tpu.py
-  # talks to the Kubernetes API server to create its Job and the API server sits on a
-  # private address. The symptom is a bare connect timeout to the API ClusterIP, with
-  # nothing in the hub log, because the packet is dropped rather than refused.
-  #
-  # Open exactly the API server and nothing else. Do NOT reach for privateIPs: true --
-  # that would let student code talk to every other pod and node in the cluster,
-  # including other students' notebooks.
-  #
-  # Allow the API server's REAL ENDPOINT, not its ClusterIP. This is the part that
-  # costs an hour if you get it wrong.
-  #
-  # GKE Dataplane V2 (Cilium) evaluates egress policy AFTER the Service DNAT. A rule
-  # permitting the `kubernetes` ClusterIP 34.118.224.1 therefore never matches: by the
-  # time policy runs, the destination has already been rewritten to the master's
-  # private endpoint, which lands inside the 10.0.0.0/8 block that z2jh's catch-all
-  # rule explicitly excepts. The packet is dropped and the client sees a bare connect
-  # timeout to the ClusterIP, which points at the wrong address entirely.
-  #
-  # Get the endpoint, not the Service IP:
-  #   kubectl get endpoints kubernetes -n default -o jsonpath='{.subsets[0].addresses[0].ip}'
-  #
-  # It is stable for the life of the cluster. 02_create_cluster.sh prints it, and
-  # 03_deploy_hub.sh substitutes it, so this value is not hand-maintained.
+  # Notebook code does not need Kubernetes API access. Keep private cluster
+  # addresses and the cloud metadata server blocked.
   networkPolicy:
     enabled: true
     egressAllowRules:
       cloudMetadataServer: false
       privateIPs: false
-    egress:
-      - to:
-          - ipBlock:
-              cidr: __APISERVER_ENDPOINT__/32
-        ports:
-          - protocol: TCP
-            port: 443
 
   storage:
     type: dynamic
-    # 32Gi, not 10Gi. A 112x112 uint8 train-set disk cache is ~16 GiB
-    # (431k images x 112 x 112 x 3). A 10Gi home volume fills around a
-    # quarter of that write and the notebook is killed with ENOSPC.
-    # 32Gi holds the raw JPEGs plus the .npy cache with headroom.
-    # This size applies to newly provisioned PVCs only; existing 10Gi
-    # volumes stay 10Gi until expanded (StorageClass allows it) or deleted.
+    # Home volumes persist when a TPU notebook stops. Increase this before
+    # deployment if course models and datasets need more than 32 GiB.
     capacity: 32Gi
     dynamic:
       storageClass: standard-rwo-retain
-  # Service account the notebook uses to submit TPU Jobs. Bound by RBAC in
-  # 03_deploy_hub.sh to create Jobs in its own namespace and nothing else.
-  serviceAccountName: student
-  # A notebook holds live state and a person is waiting on it. TPU jobs are fungible and
-  # get student-tpu-job (100) instead, so chips yield and sessions do not. Before this,
-  # everything sat at priority 0 and a running notebook was evicted mid-session during a
-  # scale test. See k8s/priority-classes.yaml.
+  # Keep active notebooks above optional batch or warm-pool workloads.
   extraPodConfig:
     priorityClassName: student-notebook
-    # GKE Sandbox (gVisor) provides strong container isolation. Cloud TPU pods
-    # cannot use gVisor, so this is disabled on the Pinned TPU profile.
+    automountServiceAccountToken: false
+    # GKE Sandbox supports v5e TPUs on supported GKE versions.
     runtimeClassName: gvisor
   extraEnv:
-    KUEUE_LOCAL_QUEUE: "tpu"
-    # submit_tpu.py is mounted here rather than into /home/jovyan, because the home
-    # directory is a PVC and a ConfigMap mount would fight it.
-    PYTHONPATH: "/opt/course"
-  # 03_deploy_hub.sh fills stringData from notebooks/submit_tpu.py with helm
-  # --set-file, so the helper stays one real file instead of a copy pasted into YAML.
+    JAX_PLATFORMS: "tpu"
+  # The starter notebook is copied into each new home volume without replacing
+  # student edits on later spawns.
   extraFiles:
-    submit_tpu.py:
-      mountPath: /opt/course/submit_tpu.py
-      stringData: "placeholder, replaced at deploy time"
     hw0_tpu_hello.ipynb:
       mountPath: /opt/course/hw0_tpu_hello.ipynb
       stringData: "placeholder, replaced at deploy time"
-  # Two jobs at spawn.
-  #
-  # 1. Install the kubernetes client. The scipy-notebook image has none and
-  #    submit_tpu.py needs one. Bake this into a course image for a real term.
-  #
-  # 2. Copy the assignment into the student's home directory. extraFiles mounts are
-  #    read-only ConfigMap volumes, so the notebook cannot live in /home/jovyan
-  #    directly -- the home directory is a PVC and the two would fight. Mount it under
-  #    /opt/course and copy on first spawn instead.
-  #
-  #    `cp -n` matters: without it, every restart would overwrite the student's work
-  #    with the blank assignment.
   lifecycleHooks:
     postStart:
       exec:
@@ -371,60 +294,27 @@ singleuser:
           - "sh"
           - "-c"
           - "cp -n /opt/course/hw0_tpu_hello.ipynb /home/jovyan/ 2>/dev/null || true"
-  startTimeout: 600  # Extend from default 300s to 600s for dynamic GKE Autopilot node scale-up and CSI disk attachment
+  startTimeout: 900  # Allow Autopilot to provision a TPU node and attach the home disk.
   defaultUrl: "/lab"
   image:
-    name: us-docker.pkg.dev/__PROJECT__/cmu-idl/jupyter-course-image
+    name: us-docker.pkg.dev/__PROJECT__/course-images/scipy-notebook
     tag: "latest"
 
   profileList:
-    - display_name: "Course default (CPU notebook)"
+    - display_name: "TPU v5e notebook"
       description: >-
-        2 vCPU, 16 GB RAM, 32 GiB home disk. Where you write and debug. Run TPU work from here with
-        submit_tpu.run(); the chip is attached only while your job runs.
+        One v5e TPU chip attached to your Jupyter notebook for the entire session.
+        The same environment is available to students and TAs.
       default: true
-      # Sized for CMU 11-785 HW2P2 image disk caching (~16 GiB uint8) with bursting headroom.
-      # cpu_guarantee: 1 allows dense GKE Autopilot node packing while bursting to 2 vCPU.
       kubespawner_override:
-        cpu_limit: 2
-        cpu_guarantee: 1
-        mem_limit: "16G"
-        mem_guarantee: "4G"
-        # Spot VMs cut notebook cost by 60-91%. Student state lives on the PVC,
-        # so a preemption is just a page reload — no work lost.
-        node_selector:
-          cloud.google.com/gke-spot: "true"
-
-    # Commented out for general students to protect regional CPU quotas.
-    # Staff / instructors who need large compute can use the staff profile below.
-    # - display_name: "Large CPU notebook"
-    #   description: >-
-    #     8 vCPU, 32 GB, for dataset preprocessing, tokenizer training, or an
-    #     in-memory image cache. Still no accelerator — TPU work goes through the
-    #     queue.
-    #   kubespawner_override:
-    #     cpu_limit: 8
-    #     cpu_guarantee: 8
-    #     mem_limit: 32G
-    #     mem_guarantee: 32G
-    #     node_selector:
-    #       cloud.google.com/gke-spot: "true"
-
-    - display_name: "Pinned TPU v5e notebook (staff only)"
-      description: >-
-        One v5e chip attached to the notebook for as long as it runs, for interactive
-        debugging. Bills the whole ct5lp-hightpu-1t node at about $1.35/hr. Staff only,
-        because a class of 300 doing this is $360/hr.
-      allowed_groups:
-        - staff
-      kubespawner_override:
-        image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest
+        cpu_limit: 8
+        cpu_guarantee: 4
+        mem_limit: "32G"
+        mem_guarantee: "16G"
+        extra_resource_guarantees:
+          google.com/tpu: "1"
         extra_resource_limits:
           google.com/tpu: "1"
-        extra_pod_config:
-          # Cloud TPUs require direct hardware driver access, which is incompatible
-          # with gVisor. Disable the hub-wide gVisor default for this profile.
-          runtimeClassName: ""
         node_selector:
           cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
           cloud.google.com/gke-tpu-topology: 1x1
@@ -432,6 +322,3 @@ singleuser:
           - key: google.com/tpu
             operator: Exists
             effect: NoSchedule
-        # Shorter leash than the CPU profiles. An idle pinned chip is the single most
-        # expensive thing a person can leave running in this cluster.
-        cull_timeout: 1800

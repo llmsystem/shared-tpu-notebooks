@@ -1,80 +1,58 @@
-# 🚀 Getting Started Guide
+# Set up LLM Systems TPU notebooks
 
-Welcome to the `shared-tpu-notebooks` environment! This guide is designed for newcomers to help you spin up the entire cluster and deploy JupyterHub smoothly.
+Every student and TA who signs in through IAP gets the same JupyterLab notebook with one v5e TPU. These steps deploy direct TPU notebooks; Kueue is not installed.
 
-## Prerequisites Checklist
+## 1. Prepare the project and workstation
 
-Before running any `make` commands, ensure you have:
-1. A **Google Cloud Project** with an active billing account.
-2. The **Google Cloud CLI** (`gcloud`) installed and updated to the latest 2026 version.
-3. **Kubernetes tools**: `kubectl` and `helm` installed.
-4. **Authentication** established:
-   ```bash
-   gcloud auth login
-   gcloud auth application-default login
-   ```
+Use a Google Cloud project with billing enabled and regional v5e TPU quota. Install `gcloud`, `kubectl`, `helm`, `docker`, `make`, and Python 3. Authenticate:
 
-## 1. Configure Your Environment
-
-Copy the example configuration file:
 ```bash
-cp config.env.example config.env
+gcloud auth login
+gcloud auth application-default login
 ```
 
-Open `config.env` and populate the fields. Crucially, set `PROJECT` to your GCP Project ID and `REGION` to a TPU-enabled region (e.g., `us-west4`).
+Copy `config.env.example` to `config.env`. Set `PROJECT` to the **project ID**, `REGION` to a v5e region, and `NAMESPACE=llmsys`. Set `STUDENT_GROUP` and `TA_GROUP` to the two Google Groups that should enter through IAP, for example `group:students@example.edu`. Set `ADMIN_USERS` for Hub administrators. Both course groups get the same TPU notebook; administrators also use that profile.
 
-## 2. Verify Quotas (Free)
+Set `MAX_TPU_NOTEBOOKS` to the maximum number of simultaneous student and TA sessions you can support. One active notebook requires one chip. The Kubernetes quota rejects spawns above this number; it does not queue them. The default is 20. Review the Pod, PVC, and storage quotas in `scripts/02_create_cluster.sh` if your course is larger than the current 40-PVC / 1-TiB allocation.
 
-Before provisioning resources, verify that your region has the required quotas for v5e TPUs (`TPU_LITE_PODSLICE_V5`).
+## 2. Check quota and build the course image
 
 ```bash
-make preflight PROJECT=my-project-id
-```
-
-## 3. The 4-Step Deployment
-
-Run these steps in order. Each script has detailed error handling and will abort safely if an issue occurs.
-
-### Step A: Build the Custom Docker Image
-The course image contains JAX, PyTorch, and the Kubernetes client.
-```bash
+make preflight
 make image
 ```
 
-### Step B: Provision the GKE Cluster
-Creates a GKE Autopilot cluster, configures Kueue, and sets up StorageClasses. (Takes ~12 minutes).
+`make preflight` checks the regional `TPU_LITE_PODSLICE_V5` quota and available v5e single-chip accelerator types. The image includes JupyterLab and JAX TPU dependencies, is built for the GKE nodes' `linux/amd64` architecture even on Apple silicon Macs, and is pushed to your project's Artifact Registry.
+
+## 3. Create the cluster and deploy JupyterHub
+
 ```bash
 make cluster
-```
-
-### Step C: Deploy JupyterHub
-Installs the Zero-to-JupyterHub Helm chart with our custom security profiles.
-```bash
 make hub
 ```
 
-### Step D: Secure with IAP (HTTPS)
-Replaces insecure port-forwarding with Google SSO Identity-Aware Proxy.
-```bash
-make iap
-```
+The cluster step creates GKE Autopilot, the `llmsys` namespace, a storage class, PriorityClasses, and a TPU ResourceQuota. It does not install Kueue. The Hub has one TPU notebook profile for all IAP-authorized users.
 
-> [!CAUTION]
-> **OAuth Consent Screen**
-> For IAP to work, you *must* configure an Internal OAuth consent screen in your Google Cloud Console under `APIs & Services > OAuth consent screen`.
+If this is an upgrade from the CPU notebook setup, stop existing user servers after
+`make hub` so their next spawn uses the TPU profile. The deployment revokes the old
+student Job-submission RoleBinding; it does not automatically uninstall a Kueue
+controller that an older deployment may have installed.
 
-## 4. Run a Smoke Test
-
-To verify that the cluster can actually schedule a job to a TPU, run the smoke test. This submits a real JAX script via a Kubernetes Job.
+## 4. Test direct TPU access
 
 ```bash
 make smoke
 ```
 
-If it prints `devices: [TpuDevice(id=0, ...)]`, your TPU pool is fully operational!
+This runs a short-lived Pod with the same course image, gVisor runtime, and one-chip v5e settings as the notebook. It should print `TPU notebook image ready:` followed by a TPU device. The smoke Pod is removed at the end.
+It provisions a real TPU node and incurs usage charges while it runs.
 
----
+## 5. Enable HTTPS and sign-in
 
-## Modifying the Flow
+```bash
+make iap
+```
 
-If you are a course TA or Instructor looking to modify how jobs run or how the Hub spawns, please see the [Developer Guide](developer_guide.md).
+Configure the OAuth branding screen for the project when the script prompts you. Wait for the Google-managed certificate to become active. Open the IAP URL printed by the script, sign in once with a student account and once with a TA account, and start a notebook for each. Open `hw0_tpu_hello.ipynb` and run its first cell; it must show a TPU device. This browser check confirms JupyterHub spawning as well as TPU access.
+
+Stop both test servers from the JupyterHub control panel when finished. Closing a browser tab does not immediately release its TPU.

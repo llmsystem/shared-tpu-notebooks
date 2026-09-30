@@ -32,8 +32,10 @@ fi
 PROJECT="${PROJECT:-${GCP_PROJECT:-}}"
 REGION="${REGION:-us-west4}"
 CLUSTER="${CLUSTER:-tpu-notebooks}"
-NAMESPACE="${NAMESPACE:-${NS:-cmu-idl}}"
+NAMESPACE="${NAMESPACE:-${NS:-llmsys}}"
+MAX_TPU_NOTEBOOKS="${MAX_TPU_NOTEBOOKS:-20}"
 
+# Retained only for the queued-Job prototype scripts, not the deployment path.
 STUDENTS="${STUDENTS:-40}"
 POOL_CHIPS="${POOL_CHIPS:-32}"
 WARM="${WARM:-1}"

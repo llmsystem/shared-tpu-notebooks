@@ -1,123 +1,71 @@
-# ==============================================================================
-# shared-tpu-notebooks Makefile
-# ==============================================================================
+# shared-tpu-notebooks: direct TPU notebooks for LLM Systems
 -include config.env
 
 PROJECT ?=
-REGION  ?= us-west4
+REGION ?= us-west4
 CLUSTER ?= tpu-notebooks
-NS      ?= cmu-idl
-WARM    ?= 1
+NAMESPACE ?= llmsys
+MAX_TPU_NOTEBOOKS ?= 20
+DOMAIN ?=
+STUDENT_GROUP ?=
+TA_GROUP ?=
+ADMIN_USERS ?=
+TEST_ACCOUNTS ?=
 
-# Course Scale and Configuration
-STUDENTS      ?= 15
-POOL_CHIPS    ?= 32
-DOMAIN        ?= # e.g. jupyter.cs.cmu.edu
-STUDENT_GROUP ?= # e.g. group:idl-11785-students@cmu.edu
-TA_GROUP      ?= # e.g. group:idl-11785-tas@cmu.edu
-ADMIN_USERS   ?= # e.g. user:bradley@cmu.edu user:ayush@cmu.edu
-TEST_ACCOUNTS ?= # e.g. user:test1@cmu.edu user:devansh@cmu.edu
+export PROJECT REGION CLUSTER NAMESPACE MAX_TPU_NOTEBOOKS DOMAIN STUDENT_GROUP TA_GROUP ADMIN_USERS TEST_ACCOUNTS
 
-# Hardware & Accelerator Generation
-TPU_ACCELERATOR ?= tpu-v5-lite-podslice
-TPU_TOPOLOGY    ?= 1x1
-TPU_IMAGE       ?= us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest
+.PHONY: check preflight image cluster hub smoke iap demo expand-pvcs expand-pvcs-dry-run clean-pvcs clean-pvcs-dry-run teardown help
 
-export PROJECT REGION CLUSTER NS NAMESPACE=$(NS) STUDENTS POOL_CHIPS WARM DOMAIN STUDENT_GROUP TA_GROUP ADMIN_USERS TEST_ACCOUNTS TPU_ACCELERATOR TPU_TOPOLOGY TPU_IMAGE
-
-.PHONY: check preflight cluster image hub iap warm-on warm-off demo smoke scale report expand-pvcs expand-pvcs-dry-run clean-pvcs clean-pvcs-dry-run teardown venv help
-
-# Ensure the PROJECT variable is set before proceeding.
 check:
 ifndef PROJECT
 	$(error PROJECT is not set. Set it in config.env or run: make $(MAKECMDGOALS) PROJECT=my-gcp-project)
 endif
 
-# Run the regional quota and availability preflight script.
 preflight: check
 	bash scripts/00_preflight.sh
 
-# Build and push the custom Jupyter course image to Artifact Registry.
 image: check
 	bash scripts/01_build_image.sh
 
-# Provision the GKE Autopilot cluster, Kueue configurations, and StorageClasses.
 cluster: check
 	bash scripts/02_create_cluster.sh
 
-# Deploy JupyterHub using Helm and configure student RBAC.
 hub: check
 	bash scripts/03_deploy_hub.sh
 
-# One real job on one real chip. This is the proof the substrate works, and it is
-# the thing to run before any scale test.
+# Runs JAX in a short-lived Pod with the same image, TPU, and sandbox settings
+# as the student notebook. Complete the browser check described in the guide too.
 smoke: check
-	sed -e 's/__STUDENT__/smoke-000/g' -e 's/__NAMESPACE__/$(NS)/g' -e 's/__QUEUE__/tpu/g' \
-	  k8s/student-tpu-job.yaml | kubectl apply -f -
-	kubectl -n $(NS) wait --for=condition=complete job/smoke-000 --timeout=900s
-	kubectl -n $(NS) logs -l job-name=smoke-000 --tail=-1
-	kubectl -n $(NS) delete job smoke-000
+	bash scripts/04_smoke_tpu_notebook.sh
 
-# HTTPS + Google sign-in via Identity-Aware Proxy. Run once per cluster. Replaces
-# port-forwarding, which binds to a single proxy pod and dies when that pod moves.
 iap: check
 	bash scripts/08_setup_iap.sh
 
-# Hold warm TPU nodes so the first job of the day skips the 2-4 min node build.
-# Warm chips bill continuously, so turn them off when you are done.
-warm-on: check
-	bash scripts/07_warm_pool.sh on $(WARM)
+demo: image cluster hub smoke
+	@echo "Secure the hub with: make iap"
 
-# Release any warm placeholder TPU chips to stop billing.
-warm-off: check
-	bash scripts/07_warm_pool.sh off
-
-# Full automated demo: Create cluster, deploy hub, and run smoke test.
-demo: cluster hub smoke
-	@echo
-	@echo "Put the hub behind HTTPS and Google sign-in:  make iap PROJECT=$(PROJECT)"
-
-# Create a python virtual environment for local scripts.
-venv:
-	python3 -m venv .venv && ./.venv/bin/pip install --quiet --upgrade pip
-
-# Run the concurrency scale test.
-scale: check venv
-	./.venv/bin/python scripts/04_scale_test.py --students $(STUDENTS) --chips $(POOL_CHIPS) --namespace $(NS)
-	./.venv/bin/python scripts/05_report.py
-
-# Online expansion of existing student PVCs (e.g. 10Gi -> 32Gi)
 expand-pvcs-dry-run: check
 	bash scripts/11_expand_pvcs.sh --dry-run
 
 expand-pvcs: check
 	bash scripts/11_expand_pvcs.sh --execute
 
-# Clean up retained PVCs and underlying GCP persistent disks at end of term
 clean-pvcs-dry-run: check
 	bash scripts/10_cleanup_pvcs.sh --dry-run
 
 clean-pvcs: check
 	bash scripts/10_cleanup_pvcs.sh --execute
 
-# Fully destroy the cluster, queued resources, static IPs, and stop all billing.
 teardown: check
 	bash scripts/99_teardown.sh
 
 help:
-	@echo "shared-tpu-notebooks Makefile commands:"
-	@echo "  make preflight PROJECT=...   Check regional quota and accelerator types (free)"
-	@echo "  make image PROJECT=...       Build & push custom course image to Artifact Registry"
-	@echo "  make cluster PROJECT=...     Create GKE Autopilot cluster, Kueue, & quotas (~12m)"
-	@echo "  make hub PROJECT=...         Deploy JupyterHub Helm chart & student RBAC"
-	@echo "  make smoke PROJECT=...       Submit 1 verification TPU job on 1 v5e chip"
-	@echo "  make iap PROJECT=...         Configure HTTPS Ingress & Google Identity-Aware Proxy"
-	@echo "  make warm-on PROJECT=...     Hold WARM placeholder chips ready (default WARM=1)"
-	@echo "  make warm-off PROJECT=...    Release warm placeholder chips"
-	@echo "  make scale PROJECT=...       Run concurrency scale test (STUDENTS=15 POOL_CHIPS=32)"
-	@echo "  make report                  Generate analytics report from latest test run"
-	@echo "  make expand-pvcs-dry-run     Preview existing student PVCs to be resized (10Gi->32Gi)"
-	@echo "  make expand-pvcs             Dynamically resize existing PVCs to 32Gi online"
-	@echo "  make clean-pvcs-dry-run      Preview retained PVCs & persistent disks"
-	@echo "  make clean-pvcs              Permanently delete retained PVCs & persistent disks"
-	@echo "  make teardown PROJECT=...    Destroy cluster, queued resources, and static IP"
+	@echo "Direct TPU notebook commands:"
+	@echo "  make preflight      Check regional v5e quota and availability"
+	@echo "  make image          Build and push the Jupyter + JAX TPU image"
+	@echo "  make cluster        Create Autopilot cluster, namespace, storage, and TPU quota"
+	@echo "  make hub            Deploy JupyterHub for students and TAs"
+	@echo "  make smoke          Run a TPU smoke Pod with the notebook image"
+	@echo "  make iap            Configure HTTPS and Google Identity-Aware Proxy"
+	@echo "  make clean-pvcs-dry-run / clean-pvcs   Preview or remove home disks"
+	@echo "  make teardown       Delete the cluster and static IP"

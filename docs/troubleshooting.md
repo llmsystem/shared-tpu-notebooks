@@ -1,84 +1,29 @@
-# 🔧 Troubleshooting Guide
+# Troubleshooting direct TPU notebooks
 
-This document lists the most common errors encountered when operating the `shared-tpu-notebooks` cluster, updated for 2026 Autopilot behaviors.
+## IAP says “You don't have access”
 
-## 1. IAP: "You don't have access"
+Confirm that the account belongs to the Google Group configured in `STUDENT_GROUP` or `TA_GROUP` in `config.env`, or is listed in `ADMIN_USERS` or `TEST_ACCOUNTS`. Run `make iap` again to apply the bindings. Also configure the project's OAuth branding screen.
 
-**Symptom:**
-You browse to `https://jupyter.yourdomain.com` and Google shows a white screen saying you do not have access.
+## A notebook stays Pending
 
-**Root Cause:**
-Your email address is not bound to the `roles/iap.httpsResourceAccessor` IAM role.
+Check the Pod and its events:
 
-**Fix:**
-Run the IAP setup script again with your email in the `ADMIN_USERS` environment variable in `config.env`.
 ```bash
-make iap
+kubectl -n llmsys get pods
+kubectl -n llmsys describe pod POD_NAME
+kubectl -n llmsys get resourcequota class-quota
 ```
 
-## 2. Notebooks fail to spawn (Stuck in Pending)
+A direct TPU notebook needs one available v5e chip. Check regional `TPU_LITE_PODSLICE_V5` quota with `make preflight`, then check GKE capacity and the Pod events. The namespace quota `requests.google.com/tpu` can also reject a spawn after `MAX_TPU_NOTEBOOKS` chips are requested. There is no Kueue queue for notebooks.
 
-**Symptom:**
-Students click "Start" and the progress bar stalls indefinitely.
+## The notebook starts but JAX cannot find a TPU
 
-**Root Cause:**
-You have hit the GCP Regional `CPUS` quota limit. GKE Autopilot cannot provision more Spot CPU VMs.
+Run `jax.devices()` in the notebook. The sole profile must request `google.com/tpu: 1` with `tpu-v5-lite-podslice` and `1x1` selectors. Run `make smoke` to test the image and TPU runtime in a separate Pod. If the smoke Pod works but the browser notebook does not, inspect the spawned Pod and Hub logs.
 
-**Fix:**
-Verify your quota:
-```bash
-gcloud compute project-info describe --project=YOUR_PROJECT | grep -A 5 "CPUS"
-```
-You need about 8 vCPU of *node* quota per concurrent student: each default notebook requests 2 vCPU / 16 GiB, and Autopilot packs one of those per ~32 GiB node after DaemonSets. For 15 concurrent students, this requires ~120 vCPU (only 8% of the standard 1500 vCPU GCP project quota). If scaling to 100+ concurrent students, request a quota increase in the GCP Console.
+## Image pull or Jupyter startup fails
 
-## 3. TPU Jobs hang in the queue for 5+ minutes
+Run `make image` and `make hub` with the same `PROJECT` and `REGION` in `config.env`. The Hub should use `${REGION}-docker.pkg.dev/${PROJECT}/course-images/scipy-notebook:latest`. Check the Pod events for Artifact Registry permissions and the container logs for `jupyterhub-singleuser` errors.
 
-**Symptom:**
-The cell output shows:
-```text
-submitted tpu-studentname to queue 'tpu'
-```
-But the `admitted` message never appears.
+## Autopilot rejects the metadata init container
 
-**Root Cause:**
-1. **Zero Flex Capacity:** The DWS Flex pool in your zone is empty, and standard on-demand capacity is heavily congested.
-2. **Kueue Cohort Full:** 300 students submitted a job at exactly the same time, and Kueue is processing them (this is normal behavior, just wait).
-
-**Fix:**
-Check Kueue cluster queues:
-```bash
-kubectl get clusterqueues
-kubectl get workloads -n cmu-idl
-```
-If a workload says "Quota Reserved" but the Pod is pending, GKE is currently booting the TPU VM. Wait 2-4 minutes.
-
-## 4. `ApiException: 403 Forbidden` in Notebook
-
-**Symptom:**
-Running `submit_tpu.run()` yields an HTTP 403 error from the Python Kubernetes client.
-
-**Root Cause:**
-The student notebook ServiceAccount does not have RBAC permissions to create Jobs.
-
-**Fix:**
-Ensure the `student-tpu-rbac` Role and RoleBinding are correctly applied. Re-run:
-```bash
-make hub
-```
-
-## 5. Webhook Rejection for Privilege
-
-**Symptom:**
-JupyterHub pods fail to start with `denied by autogke-disallow-privilege: container block-cloud-metadata is privileged`.
-
-**Root Cause:**
-You modified `jupyterhub-values.yaml` and re-enabled `blockWithIptables`. GKE Autopilot strictly forbids `NET_ADMIN` privileges.
-
-**Fix:**
-In `jupyterhub-values.yaml`, ensure:
-```yaml
-singleuser:
-  cloudMetadata:
-    blockWithIptables: false
-```
-Our NetworkPolicy already blocks the metadata server via Cilium Dataplane V2, so iptables are not needed.
+Keep `singleuser.cloudMetadata.blockWithIptables: false` in `k8s/jupyterhub-values.yaml`. The notebook NetworkPolicy blocks metadata-server egress without the privileged init container.

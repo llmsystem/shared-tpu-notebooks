@@ -143,8 +143,13 @@ Certificate is still "${STATUS:-pending}". That's normal for up to an hour. Chec
 
   kubectl --context=${GKE_CTX} -n ${NAMESPACE} describe managedcertificate hub-cert
 
-FailedNotVisible means the domain doesn't resolve to ${IP} yet. If it's still failing
-after an hour, nip.io may be rejected by the CA; register a real domain, point an A
-record at ${IP}, and re-run with DOMAIN=your.domain.
+FailedNotVisible means the certificate authority cannot reach the domain on a
+working load balancer. Check that the Ingress has an ADDRESS and that the domain
+resolves to ${IP}. If the Ingress has no ADDRESS, inspect it with:
+
+  kubectl --context=${GKE_CTX} -n ${NAMESPACE} describe ingress hub-ingress
+
+If the Ingress has an address but validation still fails after an hour, a custom
+domain with an A record pointing at ${IP} may be needed.
 EOF
 fi
