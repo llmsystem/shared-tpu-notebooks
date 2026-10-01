@@ -82,36 +82,34 @@ bind_iam_member() {
     || echo "      warning: could not bind ${member}; grant ${role} manually if needed"
 }
 
+bind_iam_members() {
+  local members="$1" default_kind="$2" member
+  local -a items
+  read -r -a items <<< "${members//,/ }"
+  for member in "${items[@]}"; do
+    [[ "${member}" != group:* && "${member}" != user:* ]] && member="${default_kind}:${member}"
+    bind_iam_member "${member}"
+  done
+}
+
 # 1. Student Group
 if [[ -n "${STUDENT_GROUP}" ]]; then
-  for grp in ${STUDENT_GROUP}; do
-    [[ "${grp}" != group:* && "${grp}" != user:* ]] && grp="group:${grp}"
-    bind_iam_member "${grp}"
-  done
+  bind_iam_members "${STUDENT_GROUP}" group
 fi
 
 # 2. TA Group
 if [[ -n "${TA_GROUP}" ]]; then
-  for grp in ${TA_GROUP}; do
-    [[ "${grp}" != group:* && "${grp}" != user:* ]] && grp="group:${grp}"
-    bind_iam_member "${grp}"
-  done
+  bind_iam_members "${TA_GROUP}" group
 fi
 
 # 3. Admin Users
 if [[ -n "${ADMIN_USERS}" ]]; then
-  for adm in ${ADMIN_USERS}; do
-    [[ "${adm}" != user:* && "${adm}" != group:* ]] && adm="user:${adm}"
-    bind_iam_member "${adm}"
-  done
+  bind_iam_members "${ADMIN_USERS}" user
 fi
 
 # 4. Individual Test / Manual Accounts
 if [[ -n "${TEST_ACCOUNTS}" ]]; then
-  for acct in ${TEST_ACCOUNTS}; do
-    [[ "${acct}" != user:* && "${acct}" != group:* ]] && acct="user:${acct}"
-    bind_iam_member "${acct}"
-  done
+  bind_iam_members "${TEST_ACCOUNTS}" user
 fi
 
 # 5. Fallback if nothing configured at all
