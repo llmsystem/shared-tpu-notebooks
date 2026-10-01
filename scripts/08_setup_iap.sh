@@ -41,13 +41,31 @@ IP=$(gcloud compute addresses describe "${IP_NAME}" --global --project="${PROJEC
 # validate without us owning a DNS zone.
 if [[ -z "${DOMAIN}" ]]; then
   DOMAIN="${IP}.nip.io"
-  echo "    No DOMAIN specified in Makefile. Using ${IP}  ->  ${DOMAIN}"
+  echo "    No DOMAIN specified in config.env. Using ${IP}  ->  ${DOMAIN}"
 else
   echo "    Using custom domain: ${DOMAIN}"
 fi
 
+EXISTING_CERT_DOMAIN=$("${K[@]}" -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
+  -o jsonpath='{.spec.domains[0]}' 2>/dev/null || true)
+if [[ -n "${EXISTING_CERT_DOMAIN}" && "${EXISTING_CERT_DOMAIN}" != "${DOMAIN}" ]]; then
+  echo "Certificate ${HUB_CERT_NAME} already covers ${EXISTING_CERT_DOMAIN}." >&2
+  echo "Choose a new HUB_CERT_NAME for ${DOMAIN} to keep the old certificate available." >&2
+  exit 1
+fi
+
+# Keep any currently attached certificate until the new hostname has working HTTPS.
+CERT_NAMES=$("${K[@]}" -n "${NAMESPACE}" get ingress hub-ingress \
+  -o jsonpath='{.metadata.annotations.networking\.gke\.io/managed-certificates}' 2>/dev/null || true)
+case ",${CERT_NAMES}," in
+  *",${HUB_CERT_NAME},"*) ;;
+  ",,") CERT_NAMES="${HUB_CERT_NAME}" ;;
+  *) CERT_NAMES="${CERT_NAMES},${HUB_CERT_NAME}" ;;
+esac
+
 echo "==> BackendConfig, ManagedCertificate, Ingress"
 sed -e "s|__DOMAIN__|${DOMAIN}|g" -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+  -e "s|__CERT_NAME__|${HUB_CERT_NAME}|g" -e "s|__CERT_NAMES__|${CERT_NAMES}|g" \
   "$(dirname "$0")/../k8s/ingress-iap.yaml" | "${K[@]}" apply -f -
 
 echo "==> granting IAP access"
@@ -114,7 +132,7 @@ EOF
 
 echo "==> waiting for the certificate (15-60 min is normal)"
 for i in $(seq 1 80); do
-  STATUS=$("${K[@]}" -n "${NAMESPACE}" get managedcertificate hub-cert \
+  STATUS=$("${K[@]}" -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
              -o jsonpath='{.status.certificateStatus}' 2>/dev/null || true)
   LBIP=$("${K[@]}" -n "${NAMESPACE}" get ingress hub-ingress \
            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
@@ -124,7 +142,7 @@ for i in $(seq 1 80); do
 done
 echo
 
-STATUS=$("${K[@]}" -n "${NAMESPACE}" get managedcertificate hub-cert \
+STATUS=$("${K[@]}" -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
            -o jsonpath='{.status.certificateStatus}' 2>/dev/null || true)
 
 if [[ "${STATUS}" == "Active" ]]; then
@@ -141,7 +159,7 @@ else
 
 Certificate is still "${STATUS:-pending}". That's normal for up to an hour. Check with:
 
-  kubectl --context=${GKE_CTX} -n ${NAMESPACE} describe managedcertificate hub-cert
+  kubectl --context=${GKE_CTX} -n ${NAMESPACE} describe managedcertificate ${HUB_CERT_NAME}
 
 FailedNotVisible means the certificate authority cannot reach the domain on a
 working load balancer. Check that the Ingress has an ADDRESS and that the domain

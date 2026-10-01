@@ -65,9 +65,9 @@ echo
 #
 # The hub is reached through the Ingress instead. Run 08_setup_iap.sh once per cluster.
 if kubectl -n "${NAMESPACE}" get ingress hub-ingress >/dev/null 2>&1; then
-  DOMAIN=$(kubectl -n "${NAMESPACE}" get managedcertificate hub-cert \
+  DOMAIN=$(kubectl -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
              -o jsonpath='{.spec.domains[0]}' 2>/dev/null || true)
-  STATUS=$(kubectl -n "${NAMESPACE}" get managedcertificate hub-cert \
+  STATUS=$(kubectl -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
              -o jsonpath='{.status.certificateStatus}' 2>/dev/null || true)
   echo "hub: https://${DOMAIN}   (certificate: ${STATUS:-unknown})"
 else

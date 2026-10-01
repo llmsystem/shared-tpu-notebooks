@@ -46,6 +46,7 @@ TPU_TOPOLOGY="${TPU_TOPOLOGY:-1x1}"
 TPU_IMAGE="${TPU_IMAGE:-us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:latest}"
 
 DOMAIN="${DOMAIN:-}"
+HUB_CERT_NAME="${HUB_CERT_NAME:-hub-cert}"
 STUDENT_GROUP="${STUDENT_GROUP:-}"
 TA_GROUP="${TA_GROUP:-}"
 ADMIN_USERS="${ADMIN_USERS:-}"
