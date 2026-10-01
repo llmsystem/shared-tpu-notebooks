@@ -11,6 +11,14 @@ Each open student or TA JupyterLab Pod has one v5e TPU chip attached. The chip r
 
 Users should click the red **Stop TPU Server** button in JupyterLab when they finish. It returns them to Hub home after the TPU server stops. **Log Out** clears the Hub session but leaves the TPU server running; closing the browser tab alone may also leave a TPU allocated until culling.
 
+## Your usage on Hub home
+
+The Hub **Home** page shows each signed-in user their own running server count,
+notebook hours, and estimated TPU cost for the last 30 days and all tracked time.
+Students also see their budget limit and remaining amount. Staff accounts show
+that they are exempt. The home usage endpoint uses the signed-in Hub identity;
+users cannot request another user's data.
+
 ## Per-user usage in the admin console
 
 The JupyterHub **Admin** page shows each Hub user's running server count, notebook
@@ -25,7 +33,7 @@ deployment. The default estimate is `$1.35` per chip-hour; verify the current ra
 for your region and billing agreement. This table estimates attached TPU time,
 including idle time. It does not reproduce a Cloud Billing invoice: persistent home
 disks, shared Hub resources, network traffic, discounts, and taxes are excluded.
-Only Hub administrators can read the usage endpoint.
+Only Hub administrators can read the all-user usage endpoint.
 
 ## Per-student start limit
 

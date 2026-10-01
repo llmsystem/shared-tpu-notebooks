@@ -1,0 +1,52 @@
+{% extends "templates/home.html" %}
+
+{% block main %}
+{{ super() }}
+<section class="container my-4" aria-labelledby="my-usage-heading">
+  <h2 id="my-usage-heading">Your TPU usage</h2>
+  <p class="text-body-secondary">
+    Notebook server time includes idle time. Costs are estimates for the attached TPU
+    and exclude storage, shared resources, and Cloud Billing adjustments. Tracking
+    begins when this feature is deployed.
+  </p>
+  <p id="my-usage-status" role="status">Loading usage…</p>
+  <dl class="row d-none" id="my-usage-details">
+    <dt class="col-sm-4">Running servers</dt><dd class="col-sm-8" id="my-usage-active"></dd>
+    <dt class="col-sm-4">Last 30 days</dt><dd class="col-sm-8" id="my-usage-30d"></dd>
+    <dt class="col-sm-4">All tracked time</dt><dd class="col-sm-8" id="my-usage-all"></dd>
+    <dt class="col-sm-4">Student budget</dt><dd class="col-sm-8" id="my-usage-budget"></dd>
+  </dl>
+</section>
+{% endblock main %}
+
+{% block script %}
+{{ super() }}
+<script>
+(() => {
+  const status = document.getElementById('my-usage-status');
+  const details = document.getElementById('my-usage-details');
+  const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const hours = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+  fetch(`${window.jhdata.base_url}usage/me`, { credentials: 'same-origin', cache: 'no-store' })
+    .then(response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then(({ usage }) => {
+      document.getElementById('my-usage-active').textContent = String(usage.active);
+      document.getElementById('my-usage-30d').textContent =
+        `${hours.format(usage.hours_30d)} hours · ${money.format(usage.cost_30d_usd)} estimated`;
+      document.getElementById('my-usage-all').textContent =
+        `${hours.format(usage.hours_all)} hours · ${money.format(usage.cost_all_usd)} estimated`;
+      document.getElementById('my-usage-budget').textContent = usage.budget_exempt
+        ? 'Staff exempt'
+        : `${money.format(usage.budget_remaining_usd)} remaining of ${money.format(usage.budget_limit_usd)}`;
+      status.hidden = true;
+      details.classList.remove('d-none');
+    })
+    .catch(() => {
+      status.textContent = 'Could not load usage. Please refresh or contact course staff.';
+    });
+})();
+</script>
+{% endblock script %}

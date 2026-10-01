@@ -11,7 +11,7 @@ from tornado import web
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "k8s"))
 from usage_tracker import (
-    WINDOW_SECONDS, budget_overrides, estimated_cost, record_start, record_stop,
+    WINDOW_SECONDS, budget_overrides, estimated_cost, open_sessions, record_start, record_stop,
     set_budget_override, summarize,
 )
 import usage_tracker
@@ -57,6 +57,65 @@ class UsageTrackerTests(unittest.TestCase):
         row = summarize(["alice"], 1.35, now=now, path=self.db)[0]
         self.assertEqual(row["hours_30d"], 0)
         self.assertEqual(row["hours_all"], 1)
+
+    def test_personal_summary_filters_other_users_and_includes_zero_usage(self):
+        now = 2_000_000_000.0
+        record_start("bob", at=now - 3600, path=self.db)
+        self.assertEqual(open_sessions(path=self.db, username="alice"), [])
+        self.assertEqual(open_sessions(path=self.db, username="bob"), [("bob", "")])
+        rows = summarize(["alice"], 1.35, now=now, path=self.db, only_username="alice")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["username"], "alice")
+        self.assertEqual(rows[0]["hours_all"], 0)
+
+    def test_personal_endpoint_uses_authenticated_identity(self):
+        class FakeBaseHandler:
+            def set_header(self, key, value):
+                self.headers[key] = value
+
+            def write(self, value):
+                self.payload = value
+
+        jupyterhub = types.ModuleType("jupyterhub")
+        jupyterhub.orm = types.SimpleNamespace(User=object())
+        handlers = types.ModuleType("jupyterhub.handlers")
+        handler_base = types.ModuleType("jupyterhub.handlers.base")
+        handler_base.BaseHandler = FakeBaseHandler
+        scopes = types.ModuleType("jupyterhub.scopes")
+        scopes.needs_scope = lambda scope: lambda method: method
+        kubespawner = types.ModuleType("kubespawner")
+        kubespawner.KubeSpawner = object
+        modules = {
+            "jupyterhub": jupyterhub, "jupyterhub.handlers": handlers,
+            "jupyterhub.handlers.base": handler_base,
+            "jupyterhub.scopes": scopes, "kubespawner": kubespawner,
+        }
+        config = types.SimpleNamespace(JupyterHub=types.SimpleNamespace())
+        with patch.dict(sys.modules, modules), patch.dict("os.environ", {"TPU_HOURLY_USD": "1", "STUDENT_TPU_BUDGET_USD": "150"}):
+            usage_tracker.configure(config)
+        handler_class = dict(config.JupyterHub.extra_handlers)[r"/usage/me"]
+        handler = handler_class()
+        handler.current_user = types.SimpleNamespace(name="alice", admin=False, spawners={})
+        handler.headers = {}
+        now = 2_000_000_000.0
+        record_start("bob", at=now - 10 * 3600, path=self.db)
+        record_stop("bob", at=now, path=self.db)
+        record_start("alice", at=now - 3600, path=self.db)
+        record_stop("alice", at=now, path=self.db)
+        set_budget_override("alice", 20, path=self.db)
+        with patch.object(usage_tracker.time, "time", return_value=now), \
+             patch.object(usage_tracker, "open_sessions", side_effect=lambda username: open_sessions(path=self.db, username=username)), \
+             patch.object(usage_tracker, "summarize", side_effect=lambda usernames, rate, now, only_username: summarize(usernames, rate, now=now, path=self.db, only_username=only_username)), \
+             patch.object(usage_tracker, "budget_overrides", side_effect=lambda: budget_overrides(path=self.db)), \
+             patch.object(usage_tracker, "estimated_cost", side_effect=lambda name, rate, now: estimated_cost(name, rate, now=now, path=self.db)):
+            # Skip Tornado's auth wrapper here; exercise the body with a signed-in user.
+            handler_class.get.__wrapped__(handler)
+        self.assertEqual(handler.headers["Cache-Control"], "no-store")
+        self.assertEqual(handler.payload["usage"]["username"], "alice")
+        self.assertEqual(handler.payload["usage"]["hours_all"], 1)
+        self.assertEqual(handler.payload["usage"]["budget_limit_usd"], 20)
+        self.assertEqual(handler.payload["usage"]["budget_remaining_usd"], 19)
+        self.assertNotIn("bob", str(handler.payload))
 
     def test_unrounded_all_time_cost_includes_active_and_old_sessions(self):
         now = 2_000_000_000.0
