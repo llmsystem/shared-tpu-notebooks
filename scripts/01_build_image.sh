@@ -65,7 +65,8 @@ echo "==> configuring docker auth for Artifact Registry"
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
 echo "==> building linux/amd64 image ${IMAGE} for GKE TPU nodes"
-docker build --platform linux/amd64 -t "${IMAGE}" "$(dirname "$0")/../docker"
+docker build --platform linux/amd64 -f "$(dirname "$0")/../docker/Dockerfile" \
+  -t "${IMAGE}" "$(dirname "$0")/.."
 
 echo "==> pushing image"
 docker push "${IMAGE}"

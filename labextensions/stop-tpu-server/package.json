@@ -1,0 +1,20 @@
+{
+  "name": "@course/stop-tpu-server",
+  "version": "1.0.0",
+  "description": "Stop the current JupyterHub server from the JupyterLab toolbar",
+  "private": true,
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "jupyter labextension build ."
+  },
+  "dependencies": {
+    "@jupyterlab/coreutils": "^6.2.0"
+  },
+  "devDependencies": {
+    "@jupyterlab/builder": "^4.2.0"
+  },
+  "jupyterlab": {
+    "extension": true,
+    "outputDir": "labextension"
+  }
+}

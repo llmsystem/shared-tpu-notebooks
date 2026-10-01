@@ -9,7 +9,7 @@ Each open student or TA JupyterLab Pod has one v5e TPU chip attached. The chip r
 3. A user's 32 GiB home volume persists after the server stops. This retains work but continues to incur disk storage charges.
 4. `make smoke` deletes its short-lived TPU test Pod after the check finishes.
 
-Users should click the red **Stop TPU Server** button in JupyterLab when they finish. It returns them to Hub home after the TPU server stops. Closing the browser tab alone may leave a TPU allocated until culling.
+Users should click the red **Stop TPU Server** button in JupyterLab when they finish. It returns them to Hub home after the TPU server stops. **Log Out** clears the Hub session but leaves the TPU server running; closing the browser tab alone may also leave a TPU allocated until culling.
 
 ## Per-user usage in the admin console
 

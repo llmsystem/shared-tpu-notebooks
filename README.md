@@ -4,7 +4,7 @@ This repository deploys JupyterHub for CMU 11-868 LLM Systems on GKE Autopilot. 
 
 A notebook holds its chip for its entire session, including idle time. The Hub stops a session after 30 minutes of inactivity or eight hours of age. Users should stop their server when finished.
 
-JupyterLab shows a red **Stop TPU Server** button in its top bar. It stops the user's server and returns to Hub home; the persistent home volume remains. Closing a browser tab does not immediately stop a server.
+JupyterLab shows a red **Stop TPU Server** button in its top bar. It stops the user's server and returns to Hub home; the persistent home volume remains. The Hub control panel's **Log Out** button clears the Hub session without stopping the server. Closing a browser tab does not immediately stop a server.
 
 ## Deployment flow
 

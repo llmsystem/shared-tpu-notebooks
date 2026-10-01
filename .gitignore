@@ -20,3 +20,7 @@ results/
 # OS Metadata
 .DS_Store
 Thumbs.db
+
+# JupyterLab extension build artifacts
+labextensions/**/node_modules/
+labextensions/**/labextension/
