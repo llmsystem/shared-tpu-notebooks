@@ -1,6 +1,6 @@
 # Set up LLM Systems TPU notebooks
 
-Every student and TA who signs in through IAP gets the same JupyterLab notebook with one v5e TPU. These steps deploy direct TPU notebooks; Kueue is not installed.
+Every student and TA who signs in through IAP gets the same JupyterLab notebook with one v5e TPU. These steps deploy direct TPU notebooks; Kueue is not installed. For more detailed setup instructions, see the [Google Docs guide](https://docs.google.com/document/d/1LNVRD3tSMCs6nC-eDaBpE4WnlDkbpnwt1RyO9TucAXY/edit?usp=sharing).
 
 ## 1. Prepare the project and workstation
 
