@@ -1,4 +1,4 @@
-"""Per-user TPU notebook time and cost estimates for the JupyterHub admin UI.
+"""Per-user TPU notebook time and cost estimates for JupyterHub.
 
 Mounted into the Hub by hub.extraFiles. The SQLite ledger lives on the Hub PVC,
 separate from JupyterHub's own database schema.
@@ -67,8 +67,13 @@ def record_stop(username, server_name="", at=None, path=DB_PATH):
         )
 
 
-def open_sessions(path=DB_PATH):
+def open_sessions(path=DB_PATH, username=None):
     with _connect(path) as db:
+        if username is not None:
+            return db.execute(
+                "SELECT DISTINCT username, server_name FROM sessions "
+                "WHERE stopped IS NULL AND username = ?", (username,)
+            ).fetchall()
         return db.execute(
             "SELECT DISTINCT username, server_name FROM sessions WHERE stopped IS NULL"
         ).fetchall()
@@ -115,21 +120,27 @@ def set_budget_override(username, limit_usd, path=DB_PATH):
         )
 
 
-def summarize(usernames, hourly_usd, now=None, path=DB_PATH):
+def summarize(usernames, hourly_usd, now=None, path=DB_PATH, only_username=None):
     now = time.time() if now is None else now
     cutoff = now - WINDOW_SECONDS
     totals = defaultdict(lambda: {"hours_30d": 0.0, "hours_all": 0.0, "active": 0})
     with _connect(path) as db:
-        for username, started, stopped in db.execute(
-            "SELECT username, started, stopped FROM sessions"
-        ):
+        if only_username is None:
+            intervals = db.execute("SELECT username, started, stopped FROM sessions")
+        else:
+            intervals = db.execute(
+                "SELECT username, started, stopped FROM sessions WHERE username = ?",
+                (only_username,),
+            )
+        for username, started, stopped in intervals:
             end = now if stopped is None else min(stopped, now)
             totals[username]["hours_all"] += max(0.0, end - started) / 3600
             totals[username]["hours_30d"] += max(0.0, end - max(started, cutoff)) / 3600
             if stopped is None:
                 totals[username]["active"] += 1
     rows = []
-    for username in sorted(set(usernames) | totals.keys()):
+    included_users = {only_username} if only_username is not None else set(usernames) | totals.keys()
+    for username in sorted(included_users):
         row = totals[username]
         rows.append(
             {
@@ -146,7 +157,7 @@ def summarize(usernames, hourly_usd, now=None, path=DB_PATH):
 
 
 def configure(c):
-    """Install tracked spawning, a student budget, and admin usage endpoints."""
+    """Install tracked spawning, a student budget, and usage endpoints."""
     from jupyterhub import orm
     from jupyterhub.handlers.base import BaseHandler
     from jupyterhub.scopes import needs_scope
@@ -231,6 +242,30 @@ def configure(c):
                 }
             )
 
+    class MyUsageHandler(BaseHandler):
+        @web.authenticated
+        def get(self):
+            username = self.current_user.name
+            now = time.time()
+            # Reconcile only this user's stale intervals before calculating usage.
+            for _, server_name in open_sessions(username=username):
+                spawner = self.current_user.spawners.get(server_name)
+                if spawner is None or not spawner.active:
+                    record_stop(username, server_name, at=now)
+            row = summarize([username], hourly_usd, now=now, only_username=username)[0]
+            if self.current_user.admin:
+                row["budget_exempt"] = True
+            else:
+                limit = budget_overrides().get(username, default_budget)
+                row["budget_exempt"] = False
+                row["budget_limit_usd"] = limit
+                row["budget_remaining_usd"] = round(
+                    max(0.0, limit - estimated_cost(username, hourly_usd, now=now)), 2
+                )
+            self.set_header("Cache-Control", "no-store")
+            self.set_header("Content-Type", "application/json")
+            self.write({"usage": row})
+
     class UsageLimitHandler(BaseHandler):
         @web.authenticated
         @needs_scope("admin:users")
@@ -264,5 +299,6 @@ def configure(c):
     c.JupyterHub.extra_handlers = [
         (r"/admin/usage/limit", UsageLimitHandler),
         (r"/admin/usage", UsageHandler),
+        (r"/usage/me", MyUsageHandler),
     ]
     c.JupyterHub.template_paths = ["/usr/local/share/jupyterhub/custom_templates"]

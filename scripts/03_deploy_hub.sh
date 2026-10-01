@@ -49,6 +49,7 @@ helm upgrade --install "${RELEASE}" jupyterhub/jupyterhub \
   --set "hub.config.Authenticator.admin_users={${ADMIN_STR}}" \
   --set-file "hub.extraFiles.usageTrackerPy.stringData=$(dirname "$0")/../k8s/usage_tracker.py" \
   --set-file "hub.extraFiles.adminUsageTemplate.stringData=$(dirname "$0")/../k8s/admin-usage.html" \
+  --set-file "hub.extraFiles.homeUsageTemplate.stringData=$(dirname "$0")/../k8s/home-usage.html" \
   --set-file "singleuser.extraFiles.hw0_tpu_hello\.ipynb.stringData=$(dirname "$0")/../notebooks/hw0_tpu_hello.ipynb" \
   --timeout 20m \
   --wait

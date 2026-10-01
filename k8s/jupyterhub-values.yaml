@@ -19,6 +19,9 @@ hub:
     adminUsageTemplate:
       mountPath: /usr/local/share/jupyterhub/custom_templates/admin.html
       stringData: "placeholder, replaced at deploy time"
+    homeUsageTemplate:
+      mountPath: /usr/local/share/jupyterhub/custom_templates/home.html
+      stringData: "placeholder, replaced at deploy time"
   config:
     JupyterHub:
       admin_access: true
