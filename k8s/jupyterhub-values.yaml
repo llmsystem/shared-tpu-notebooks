@@ -22,9 +22,9 @@ hub:
   config:
     JupyterHub:
       admin_access: true
-      # JupyterLab's stop button reaches the Hub logout handler, which stops the
-      # server before the IAP authenticator returns the user to /hub/home.
-      shutdown_on_logout: true
+      # Logout only clears the Hub session. The notebook toolbar stops the user's
+      # server through the Hub API, so either action can be used independently.
+      shutdown_on_logout: false
     Authenticator:
       # Local part of the Google identity IAP forwards, i.e. everything before the @.
       admin_users:
@@ -54,6 +54,9 @@ hub:
   # trusting the email header. The header is sufficient here because the only path in
   # is the IAP-protected one.
   extraConfig:
+    notebook-stop-scope: |
+      # Browser OAuth tokens may stop their owner's server, but no other user's.
+      c.Spawner.oauth_client_allowed_scopes = ["servers!user"]
     usage-tracking: |
       import sys
       sys.path.insert(0, "/usr/local/etc/jupyterhub")
@@ -79,10 +82,10 @@ hub:
       import json
       import urllib.request
       from jupyterhub.auth import Authenticator
-      from jupyterhub.handlers.login import LoginHandler, LogoutHandler
+      from jupyterhub.handlers.base import BaseHandler
+      from jupyterhub.handlers.login import LogoutHandler
       from jupyterhub.utils import url_path_join
       from tornado import web
-      from tornado.httputil import url_concat
 
       IAP_JWT_HEADER = "X-Goog-IAP-JWT-Assertion"
       IAP_EMAIL_HEADER = "X-Goog-Authenticated-User-Email"
@@ -140,7 +143,7 @@ hub:
               
           return claims
 
-      class IAPLoginHandler(LoginHandler):
+      class IAPLoginHandler(BaseHandler):
           async def get(self):
               jwt_assertion = self.request.headers.get(IAP_JWT_HEADER, "")
               email = ""
@@ -166,18 +169,19 @@ hub:
               username = email.split("@")[0]
               user = await self.auth_to_user({"name": username})
               self.set_login_cookie(user)
-              # Honor a safe 'next' path so a completed stop returns to Hub home
-              # without immediately spawning another TPU notebook.
+              # IAP account selection is the sign-in step; enter Hub directly.
               self.redirect(self.get_next_url(user))
 
       class IAPLogoutHandler(LogoutHandler):
           async def render_logout_page(self):
-              # LogoutHandler has already awaited server shutdown here. IAP will
-              # authenticate the next request again; preserve /hub/home as its
-              # destination so this stop action never restarts the TPU.
-              home_url = url_path_join(self.hub.server.base_url, "home")
-              login_url = url_path_join(self.hub.server.base_url, "login")
-              self.redirect(url_concat(login_url, {"next": home_url}))
+              # Clear this application's IAP cookie after the Hub session ends.
+              # Once Google authenticates, /hub/home will redirect through our
+              # IAP login handler, which enters Hub without a second button.
+              # Google may silently reauthenticate a browser with one account.
+              self.redirect(
+                  url_path_join(self.hub.base_url, "home")
+                  + "?gcp-iap-mode=CLEAR_LOGIN_COOKIE"
+              )
 
       class IAPAuthenticator(Authenticator):
           # No login form. The user already signed in at the load balancer.
@@ -368,7 +372,7 @@ singleuser:
             "toolbar": [
               {
                 "name": "stop-tpu-server",
-                "command": "hub:logout",
+                "command": "course:stop-tpu-server",
                 "label": "Stop TPU Server",
                 "caption": "Save your work, stop the TPU server, and return to Hub home.",
                 "rank": 100

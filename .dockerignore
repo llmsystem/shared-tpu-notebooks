@@ -1,0 +1,10 @@
+.git
+.venv
+config.env
+docs
+k8s
+notebooks
+scripts
+tests
+labextensions/**/node_modules
+labextensions/**/labextension
