@@ -1,0 +1,6 @@
+# Per-user TPU profiling in JupyterHub. XProf supplies the TensorBoard Profile tab.
+xprof==2.23.2
+tensorboard==2.21.0
+jupyter-server-proxy==4.6.0
+# XProf still imports pkg_resources with the Python 3.12 notebook image.
+setuptools<70

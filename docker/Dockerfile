@@ -18,6 +18,11 @@ COPY docker/requirements.txt /tmp/requirements.txt
 # Install python requirements
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+# Keep profiler dependencies in a separate layer so existing course packages
+# do not need to be downloaded again when XProf is updated.
+COPY docker/requirements-xprof.txt /tmp/requirements-xprof.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-xprof.txt
+
 # The notebook base image includes JupyterLab but not Node/npm. Copy the
 # official Node runtime so extension builds do not depend on Conda mirrors.
 USER root

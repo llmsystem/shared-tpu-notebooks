@@ -326,13 +326,35 @@ singleuser:
     runtimeClassName: gvisor
   extraEnv:
     JAX_PLATFORMS: "tpu"
-  # The starter notebook is copied into each new home volume without replacing
-  # student edits on later spawns.
+  # Install the current HW0 notebook once per revision, keeping prior work in
+  # a hidden backup. Move the old extra notebook out of the visible home folder.
   extraFiles:
     stop-tpu-css-config.py:
       mountPath: /opt/conda/etc/jupyter/jupyter_server_config.py
       stringData: |
         c.LabApp.custom_css = True
+        # Launch one TensorBoard/XProf process in this user's notebook pod on demand.
+        # Keep its URL beneath the authenticated per-user JupyterHub route.
+        import os
+
+        def xprof_command(port):
+            base_url = os.environ["JUPYTERHUB_SERVICE_PREFIX"].rstrip("/")
+            return [
+                "tensorboard",
+                "--logdir=" + os.path.join(os.path.expanduser("~"), "xprof"),
+                "--host=127.0.0.1",
+                "--port=" + str(port),
+                "--path_prefix=" + base_url + "/xprof",
+            ]
+
+        c.ServerProxy.servers = {
+            "xprof": {
+                "command": xprof_command,
+                "absolute_url": True,
+                "timeout": 60,
+                "launcher_entry": {"title": "XProf", "path_info": "xprof/"},
+            }
+        }
     custom.css:
       # The chart also mounts this individual Secret key as a file; the full
       # Secret is mounted at static/custom above to serve it at the correct URL.
@@ -392,7 +414,24 @@ singleuser:
         command:
           - "sh"
           - "-c"
-          - "cp -n /opt/course/hw0_tpu_hello.ipynb /home/jovyan/ 2>/dev/null || true"
+          - |
+            set -e
+            notebook=/home/jovyan/hw0_tpu_hello.ipynb
+            backup_dir=/home/jovyan/.course-backups
+            legacy_notebook=/home/jovyan/hw0_tpu_hello_xprof.ipynb
+            if [ -e "$legacy_notebook" ]; then
+              mkdir -p "$backup_dir"
+              mv "$legacy_notebook" "$backup_dir/hw0_tpu_hello_xprof-$(date +%s).ipynb"
+            fi
+            marker=/home/jovyan/.hw0_link_only_revision_installed
+            if [ ! -e "$marker" ]; then
+              if [ -f "$notebook" ]; then
+                mkdir -p "$backup_dir"
+                cp -np "$notebook" "$backup_dir/hw0_tpu_hello_before_link_only.ipynb"
+              fi
+              cp /opt/course/hw0_tpu_hello.ipynb "$notebook"
+              touch "$marker"
+            fi
   startTimeout: 900  # Allow Autopilot to provision a TPU node and attach the home disk.
   defaultUrl: "/lab"
   image:
