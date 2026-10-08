@@ -29,7 +29,8 @@ reconstructed. A server stopped outside JupyterHub is reconciled when an admin
 opens the usage table, using that observation time as its estimated stop time.
 
 Set `TPU_HOURLY_USD` in `config.env` to the effective v5e chip-hour rate for the
-deployment. The default estimate is `$1.35` per chip-hour; verify the current rate
+deployment. The default estimate is `$1.40` per chip-hour (us-west4 on-demand
+v5e base plus GKE TPU premium, rounded up as of October 2026); verify the current rate
 for your region and billing agreement. This table estimates attached TPU time,
 including idle time. It does not reproduce a Cloud Billing invoice: persistent home
 disks, shared Hub resources, network traffic, discounts, and taxes are excluded.

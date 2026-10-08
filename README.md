@@ -28,6 +28,12 @@ Read the [step-by-step guide](docs/getting_started.md). In the repository root:
 
 The student and TA groups get the same notebook profile. IAP controls who can reach the Hub; `ADMIN_USERS` grants Hub administration separately.
 
+The image also includes XProf for TPU profiling. See [XProf profiling](docs/xprof.md)
+for trace capture, the per-user JupyterLab launcher, and the two-stage rollout.
+The original `hw0_tpu_hello.ipynb` includes a runnable XProf example. On the
+first spawn after this update, existing users receive the revised notebook at
+that same path; their previous copy is saved in `~/.course-backups/`.
+
 ## Capacity and cost
 
 Each open notebook consumes one v5e chip and one TPU node until the server stops. `MAX_TPU_NOTEBOOKS` is a Kubernetes cap, not a reservation or a guarantee of available hardware. The quota in [scripts/02_create_cluster.sh](scripts/02_create_cluster.sh) also allows 100 Pods, 40 PVCs, and 1 TiB of requested storage; raise those values before enrolling a larger class. Each new user home volume is 32 GiB and persists after the notebook stops.

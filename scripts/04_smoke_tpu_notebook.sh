@@ -42,10 +42,24 @@ spec:
       command: ["python3", "-c"]
       args:
         - |
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
           import jax
+          import jax.numpy as jnp
+          import xprof
+          import tensorboard
+          import jupyter_server_proxy
+
           devices = jax.devices()
           assert devices and all(device.platform == "tpu" for device in devices), devices
           print("TPU notebook image ready:", devices, flush=True)
+          with TemporaryDirectory() as logdir:
+              with jax.profiler.trace(logdir):
+                  x = jnp.ones((1024, 1024))
+                  (x @ x).block_until_ready()
+              traces = list(Path(logdir).rglob("*.xplane.pb"))
+              assert traces, "JAX did not write an XProf trace"
+              print("XProf TPU trace ready:", len(traces), "file(s)", flush=True)
       resources:
         requests:
           cpu: "4"
