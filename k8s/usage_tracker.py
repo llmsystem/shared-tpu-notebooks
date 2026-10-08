@@ -164,7 +164,7 @@ def configure(c):
     from kubespawner import KubeSpawner
     from tornado import web
 
-    hourly_usd = float(os.environ.get("TPU_HOURLY_USD", "1.35"))
+    hourly_usd = float(os.environ.get("TPU_HOURLY_USD", "1.40"))
     if not math.isfinite(hourly_usd) or hourly_usd < 0:
         raise ValueError("TPU_HOURLY_USD must be a finite non-negative number")
     default_budget = float(os.environ.get("STUDENT_TPU_BUDGET_USD", "150"))

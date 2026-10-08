@@ -21,7 +21,7 @@ RESULTS = HERE.parent / "results"
 
 # v5e on Autopilot is node-billed: the $1.20 base chip rate plus the Autopilot
 # accelerator premium. Use the base rate alone and every total here reads low.
-CHIP_HR = 1.35
+CHIP_HR = 1.40
 
 
 def pct(xs: list[float], p: float) -> float:

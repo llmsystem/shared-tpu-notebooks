@@ -25,7 +25,7 @@ VALUES="$(dirname "$0")/../k8s/jupyterhub-values.yaml"
 
 IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT}/course-images/scipy-notebook"
 IMAGE_TAG="latest"
-TPU_HOURLY_USD="${TPU_HOURLY_USD:-1.35}"
+TPU_HOURLY_USD="${TPU_HOURLY_USD:-1.40}"
 STUDENT_TPU_BUDGET_USD="${STUDENT_TPU_BUDGET_USD:-150}"
 HUB_ORIGIN_ARGS=()
 if [[ -n "${DOMAIN:-}" ]]; then
