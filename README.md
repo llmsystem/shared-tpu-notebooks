@@ -1,19 +1,19 @@
 # LLM Systems TPU notebooks
 
-This repository deploys JupyterHub for CMU 11-868 LLM Systems on GKE Autopilot. Every authorized student and TA receives the same JupyterLab environment with **one Cloud TPU v5e chip attached directly to the notebook Pod**. Code runs on the TPU from ordinary notebook cells; there is no Kueue queue or Job submission step in the deployed path.
+This repository deploys JupyterHub for CMU 11-868 LLM Systems on GKE Autopilot. Notebooks use **one v5e chip by default**, with a **four-chip profile** available to selected users when enabled in config.env. Code runs on the TPU from ordinary notebook cells; there is no Kueue queue or Job submission step in the deployed path.
 
-A notebook holds its chip for its entire session, including idle time. The Hub stops a session after 30 minutes of inactivity or eight hours of age. Users should stop their server when finished.
+A notebook holds all its chips for its entire session, including idle time. The Hub stops a session after 30 minutes of inactivity or eight hours of age. Users should stop their server when finished.
 
 JupyterLab shows a red **Stop TPU Server** button in its top bar. It stops the user's server and returns to Hub home; the persistent home volume remains. The Hub control panel's **Log Out** button clears the Hub session without stopping the server. Closing a browser tab does not immediately stop a server.
 
 ## Deployment flow
 
 ```text
-Student or TA → Google IAP → JupyterHub → JupyterLab Pod + one v5e TPU
+Student or TA → Google IAP → JupyterHub → JupyterLab Pod + 1 or 4 v5e chips
                                                 ↳ persistent 32 GiB home volume
 ```
 
-The Hub uses an image built from [docker/Dockerfile](docker/Dockerfile) with JupyterLab and JAX TPU dependencies. The notebook Pod requests one TPU and a `1x1` v5e topology. GKE Autopilot provisions a TPU node for the Pod. The regional TPU quota and physical capacity must cover simultaneous notebooks; the namespace's `requests.google.com/tpu` ResourceQuota sets a hard local cap. Reaching that cap rejects new spawns rather than queuing them.
+The Hub uses an image built from [docker/Dockerfile](docker/Dockerfile) with JupyterLab and JAX TPU dependencies. When enabled, the standard notebook Pod requests one TPU and a `1x1` v5e topology; the advanced profile requests four chips and `2x2`. GKE Autopilot provisions a TPU node for the Pod. The regional TPU quota and physical capacity must cover simultaneous notebooks; the namespace's `requests.google.com/tpu` ResourceQuota sets a hard local cap. Reaching that cap rejects new spawns rather than queuing them.
 
 ## Set up
 
@@ -26,7 +26,9 @@ Read the [step-by-step guide](docs/getting_started.md). In the repository root:
 5. Run `make iap`, configure the project's OAuth branding screen, and wait for the managed HTTPS certificate.
 6. Sign in through the IAP URL as a student and as a TA. Open `hw0_tpu_hello.ipynb` and run its first cell. It must print a TPU device.
 
-The student and TA groups get the same notebook profile. IAP controls who can reach the Hub; `ADMIN_USERS` grants Hub administration separately.
+See [config.env.example](config.env.example) for enabled notebook configurations.
+
+IAP controls Hub access; `ADMIN_USERS` grants administration. Use **Admin → Notebook access** to grant four-chip access, including for admins. See [advanced notebooks](docs/advanced_notebooks.md) for switching profiles and two-chip alternatives.
 
 The image also includes XProf for TPU profiling. See [XProf profiling](docs/xprof.md)
 for trace capture, the per-user JupyterLab launcher, and the two-stage rollout.
@@ -36,7 +38,7 @@ that same path; their previous copy is saved in `~/.course-backups/`.
 
 ## Capacity and cost
 
-Each open notebook consumes one v5e chip and one TPU node until the server stops. `MAX_TPU_NOTEBOOKS` is a Kubernetes cap, not a reservation or a guarantee of available hardware. The quota in [scripts/02_create_cluster.sh](scripts/02_create_cluster.sh) also allows 100 Pods, 40 PVCs, and 1 TiB of requested storage; raise those values before enrolling a larger class. Each new user home volume is 32 GiB and persists after the notebook stops.
+Each open notebook consumes one or four v5e chips until the server stops. `MAX_TPU_NOTEBOOKS` caps chips: `standard_sessions + 4 * advanced_sessions`. It does not reserve hardware. The quota in [scripts/02_create_cluster.sh](scripts/02_create_cluster.sh) also allows 100 Pods, 40 PVCs, and 1 TiB of requested storage; raise those values before enrolling a larger class. Each new user home volume is 32 GiB and persists after the notebook stops.
 
 The JupyterHub **Admin** page includes per-user TPU hours and estimated cost for the last 30 days and all tracked time. Students cannot start another server once their all-time estimate reaches the default $150 limit. Admins can raise or reset a student's individual limit in that table. Set `TPU_HOURLY_USD` and `STUDENT_TPU_BUDGET_USD` in `config.env` as needed. Tracking starts after the updated Hub is deployed; see [cost management](docs/cost_management.md) for the estimate's scope and limits.
 
@@ -44,7 +46,7 @@ Use `make clean-pvcs-dry-run` to inspect retained home volumes and `make clean-p
 
 ## Repository layout
 
-- `k8s/jupyterhub-values.yaml`: single direct-TPU profile, authentication, network policy, storage, and culling.
+- `k8s/jupyterhub-values.yaml`: standard and advanced direct-TPU profiles, authentication, network policy, storage, and culling.
 - `scripts/00_preflight.sh`, `01_build_image.sh`, `02_create_cluster.sh`, `03_deploy_hub.sh`, `04_smoke_tpu_notebook.sh`, `08_setup_iap.sh`: active deployment path.
 - `notebooks/hw0_tpu_hello.ipynb`: starter notebook that checks the attached TPU and runs JAX directly.
 - `notebooks/submit_tpu.py`, `k8s/kueue-tpu-queues.yaml`, and the batch testing scripts: earlier queued-Job prototype retained for development. The Makefile does not deploy or call them.

@@ -2,7 +2,7 @@
 # ==============================================================================
 # Script: 02_create_cluster.sh
 # Description: Create the GKE Autopilot cluster, namespace, storage, priorities,
-#              and a concurrent TPU notebook quota. Safe to re-run.
+#              and a concurrent TPU chip quota. Safe to re-run.
 # ==============================================================================
 source "$(dirname "$0")/common.sh"
 require_project
@@ -61,7 +61,7 @@ allowVolumeExpansion: true
 volumeBindingMode: WaitForFirstConsumer
 YAML
 
-log_header "Configuring Namespace '${NAMESPACE}' and TPU notebook quota"
+log_header "Configuring Namespace '${NAMESPACE}' and TPU chip quota"
 "${K[@]}" apply -f - <<YAML
 apiVersion: v1
 kind: Namespace

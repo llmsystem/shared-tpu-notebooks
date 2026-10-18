@@ -1,6 +1,6 @@
 # Set up LLM Systems TPU notebooks
 
-Every student and TA who signs in through IAP gets the same JupyterLab notebook with one v5e TPU. These steps deploy direct TPU notebooks; Kueue is not installed. For more detailed setup instructions, see the [Google Docs guide](https://docs.google.com/document/d/1LNVRD3tSMCs6nC-eDaBpE4WnlDkbpnwt1RyO9TucAXY/edit?usp=sharing).
+Every student and TA who signs in through IAP gets the same JupyterLab environment with one v5e TPU by default. Selected users can also use four chips when enabled. These steps deploy direct TPU notebooks; Kueue is not installed. For more detailed setup instructions, see the [Google Docs guide](https://docs.google.com/document/d/1LNVRD3tSMCs6nC-eDaBpE4WnlDkbpnwt1RyO9TucAXY/edit?usp=sharing).
 
 ## 1. Prepare the project and workstation
 
@@ -11,9 +11,9 @@ gcloud auth login
 gcloud auth application-default login
 ```
 
-Copy `config.env.example` to `config.env`. Set `PROJECT` to the **project ID**, `REGION` to a v5e region, and `NAMESPACE=llmsys`. Set `STUDENT_GROUP` and `TA_GROUP` to the two Google Groups that should enter through IAP, for example `group:students@example.edu`. Set `ADMIN_USERS` for Hub administrators. Both course groups get the same TPU notebook; administrators also use that profile.
+Copy `config.env.example` to `config.env`. Set `PROJECT` to the **project ID**, `REGION` to a v5e region, and `NAMESPACE=llmsys`. Set `STUDENT_GROUP` and `TA_GROUP` to the two Google Groups that should enter through IAP, for example `group:students@example.edu`. Set `ADMIN_USERS` for Hub administrators. See [config.env.example](../config.env.example) for profile settings. Grant four-chip access through **Admin → Notebook access**, including for admins.
 
-Set `MAX_TPU_NOTEBOOKS` to the maximum number of simultaneous student and TA sessions you can support. One active notebook requires one chip. The Kubernetes quota rejects spawns above this number; it does not queue them. The default is 20. Review the Pod, PVC, and storage quotas in `scripts/02_create_cluster.sh` if your course is larger than the current 40-PVC / 1-TiB allocation.
+Set `MAX_TPU_NOTEBOOKS` to the maximum number of simultaneous TPU **chips** you can support. A standard notebook requires one chip and an advanced notebook requires four; plan `standard_sessions + 4 * advanced_sessions`. The Kubernetes quota rejects spawns above this number; it does not queue them. The default is 20. Review the Pod, PVC, and storage quotas in `scripts/02_create_cluster.sh` if your course is larger than the current 40-PVC / 1-TiB allocation.
 
 ## 2. Check quota and build the course image
 
@@ -22,7 +22,7 @@ make preflight
 make image
 ```
 
-`make preflight` checks the regional `TPU_LITE_PODSLICE_V5` quota and available v5e single-chip accelerator types. The image includes JupyterLab and JAX TPU dependencies, is built for the GKE nodes' `linux/amd64` architecture even on Apple silicon Macs, and is pushed to your project's Artifact Registry.
+`make preflight` checks the regional `TPU_LITE_PODSLICE_V5` quota and available v5e accelerator types for the enabled topologies. The image includes JupyterLab and JAX TPU dependencies, is built for the GKE nodes' `linux/amd64` architecture even on Apple silicon Macs, and is pushed to your project's Artifact Registry.
 
 ## 3. Create the cluster and deploy JupyterHub
 
@@ -31,7 +31,7 @@ make cluster
 make hub
 ```
 
-The cluster step creates GKE Autopilot, the `llmsys` namespace, a storage class, PriorityClasses, and a TPU ResourceQuota. It does not install Kueue. The Hub has one TPU notebook profile for all IAP-authorized users.
+The cluster step creates GKE Autopilot, the `llmsys` namespace, a storage class, PriorityClasses, and a TPU ResourceQuota. It does not install Kueue. See [advanced notebooks](advanced_notebooks.md) for profile access and switching.
 
 If this is an upgrade from the CPU notebook setup, stop existing user servers after
 `make hub` so their next spawn uses the TPU profile. The deployment revokes the old
@@ -44,7 +44,7 @@ controller that an older deployment may have installed.
 make smoke
 ```
 
-This runs a short-lived Pod with the same course image, gVisor runtime, and one-chip v5e settings as the notebook. It should print `TPU notebook image ready:` followed by a TPU device. The smoke Pod is removed at the end.
+This tests each enabled topology with the course image and gVisor runtime, then deletes the test Pod. Expect `TPU notebook image ready:` followed by one or four devices.
 It provisions a real TPU node and incurs usage charges while it runs.
 
 ## 5. Enable HTTPS and sign-in

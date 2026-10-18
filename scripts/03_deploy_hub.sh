@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Script: 03_deploy_hub.sh
-# Description: Install JupyterHub with one direct-TPU notebook profile for all users.
+# Description: Install JupyterHub with standard and access-controlled TPU profiles.
 # ==============================================================================
 source "$(dirname "$0")/common.sh"
+configure_tpu_topologies
 require_project
 check_prereqs gcloud kubectl helm
 
@@ -27,9 +28,9 @@ IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT}/course-images/scipy-notebook"
 IMAGE_TAG="latest"
 TPU_HOURLY_USD="${TPU_HOURLY_USD:-1.40}"
 STUDENT_TPU_BUDGET_USD="${STUDENT_TPU_BUDGET_USD:-150}"
-HUB_ORIGIN_ARGS=()
+HUB_CONFIG_ARGS=(--set-string "hub.extraEnv.TPU_ENABLED_TOPOLOGIES=${TPU_ENABLED_TOPOLOGIES}")
 if [[ -n "${DOMAIN:-}" ]]; then
-  HUB_ORIGIN_ARGS=(--set-string "singleuser.extraEnv.HUB_PUBLIC_ORIGIN=https://${DOMAIN}")
+  HUB_CONFIG_ARGS+=(--set-string "singleuser.extraEnv.HUB_PUBLIC_ORIGIN=https://${DOMAIN}")
 fi
 
 ADMIN_USERS="${ADMIN_USERS:-instructor}"
@@ -43,12 +44,13 @@ echo "==> configured JupyterHub admin users: ${ADMIN_STR}"
 
 echo "==> installing JupyterHub ${CHART_VERSION} into ${NAMESPACE}"
 helm upgrade --install "${RELEASE}" jupyterhub/jupyterhub \
+  --kube-context "${GKE_CTX}" \
   --namespace "${NAMESPACE}" \
   --version "${CHART_VERSION}" \
   --values "${VALUES}" \
   --set singleuser.image.name="${IMAGE_NAME}" \
   --set singleuser.image.tag="${IMAGE_TAG}" \
-  "${HUB_ORIGIN_ARGS[@]}" \
+  "${HUB_CONFIG_ARGS[@]}" \
   --set-string hub.extraEnv.TPU_HOURLY_USD="${TPU_HOURLY_USD}" \
   --set-string hub.extraEnv.STUDENT_TPU_BUDGET_USD="${STUDENT_TPU_BUDGET_USD}" \
   --set "hub.config.Authenticator.admin_users={${ADMIN_STR}}" \
@@ -57,10 +59,11 @@ helm upgrade --install "${RELEASE}" jupyterhub/jupyterhub \
   --set-file "hub.extraFiles.homeUsageTemplate.stringData=$(dirname "$0")/../k8s/home-usage.html" \
   --set-file "singleuser.extraFiles.hw0_tpu_hello\.ipynb.stringData=$(dirname "$0")/../notebooks/hw0_tpu_hello.ipynb" \
   --timeout 20m \
+  --atomic \
   --wait
 
 echo
-kubectl -n "${NAMESPACE}" get pods
+kubectl --context="${GKE_CTX}" -n "${NAMESPACE}" get pods
 echo
 
 # proxy-public is a ClusterIP now, so there is no external address to wait for. The
@@ -69,10 +72,10 @@ echo
 # range to 0.0.0.0/0, which the org policy forbids.
 #
 # The hub is reached through the Ingress instead. Run 08_setup_iap.sh once per cluster.
-if kubectl -n "${NAMESPACE}" get ingress hub-ingress >/dev/null 2>&1; then
-  DOMAIN=$(kubectl -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
+if kubectl --context="${GKE_CTX}" -n "${NAMESPACE}" get ingress hub-ingress >/dev/null 2>&1; then
+  DOMAIN=$(kubectl --context="${GKE_CTX}" -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
              -o jsonpath='{.spec.domains[0]}' 2>/dev/null || true)
-  STATUS=$(kubectl -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
+  STATUS=$(kubectl --context="${GKE_CTX}" -n "${NAMESPACE}" get managedcertificate "${HUB_CERT_NAME}" \
              -o jsonpath='{.status.certificateStatus}' 2>/dev/null || true)
   echo "hub: https://${DOMAIN}   (certificate: ${STATUS:-unknown})"
 else

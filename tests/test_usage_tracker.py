@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import sys
 import tempfile
 import types
@@ -12,12 +13,32 @@ from tornado import web
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "k8s"))
 from usage_tracker import (
     WINDOW_SECONDS, budget_overrides, estimated_cost, open_sessions, record_start, record_stop,
-    set_budget_override, summarize,
+    set_budget_override, summarize, advanced_users, set_advanced_access,
+    STANDARD_PROFILE, ADVANCED_PROFILE,
+    enabled_profile_slugs,
 )
 import usage_tracker
 
 
+def fake_config():
+    return types.SimpleNamespace(
+        JupyterHub=types.SimpleNamespace(),
+        KubeSpawner=types.SimpleNamespace(profile_list=[
+            {"slug": STANDARD_PROFILE}, {"slug": ADVANCED_PROFILE},
+        ]),
+    )
+
+
 class UsageTrackerTests(unittest.TestCase):
+    def test_enabled_topologies_parse_and_validate(self):
+        self.assertEqual(enabled_profile_slugs("1x1"), {STANDARD_PROFILE})
+        self.assertEqual(enabled_profile_slugs("2x2"), {ADVANCED_PROFILE})
+        for value in ("1x1,2x2", "1x1 2x2", " 2x2, 1x1 "):
+            self.assertEqual(enabled_profile_slugs(value), {STANDARD_PROFILE, ADVANCED_PROFILE})
+        for value in ("", " ", "1x2", "1x1,1x1", "2x2,4x4"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                enabled_profile_slugs(value)
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.db = str(Path(self.tempdir.name) / "usage.sqlite")
@@ -90,7 +111,7 @@ class UsageTrackerTests(unittest.TestCase):
             "jupyterhub.handlers.base": handler_base,
             "jupyterhub.scopes": scopes, "kubespawner": kubespawner,
         }
-        config = types.SimpleNamespace(JupyterHub=types.SimpleNamespace())
+        config = fake_config()
         with patch.dict(sys.modules, modules), patch.dict("os.environ", {"TPU_HOURLY_USD": "1", "STUDENT_TPU_BUDGET_USD": "150"}):
             usage_tracker.configure(config)
         handler_class = dict(config.JupyterHub.extra_handlers)[r"/usage/me"]
@@ -148,6 +169,7 @@ class UsageTrackerTests(unittest.TestCase):
                 self.user = types.SimpleNamespace(name="alice", admin=False)
                 self.name = ""
                 self.starts = 0
+                self.extra_resource_limits = {"google.com/tpu": "1"}
 
             async def start(self):
                 self.starts += 1
@@ -167,7 +189,7 @@ class UsageTrackerTests(unittest.TestCase):
             "jupyterhub.handlers.base": handler_base,
             "jupyterhub.scopes": scopes, "kubespawner": kubespawner,
         }
-        config = types.SimpleNamespace(JupyterHub=types.SimpleNamespace())
+        config = fake_config()
         with patch.dict(sys.modules, modules), patch.dict("os.environ", {"TPU_HOURLY_USD": "1", "STUDENT_TPU_BUDGET_USD": "150"}):
             usage_tracker.configure(config)
         spawner = config.JupyterHub.spawner_class()
@@ -183,6 +205,62 @@ class UsageTrackerTests(unittest.TestCase):
             set_budget_override("alice", 200, path=self.db)
             self.assertEqual(asyncio.run(spawner.start()), "started")
             self.assertEqual(spawner.starts, 1)
+
+    def test_four_chip_cost_and_window_keep_server_hours_separate(self):
+        now = 2_000_000_000.0
+        record_start("alice", at=now - WINDOW_SECONDS - 3600, chips=4, path=self.db)
+        record_stop("alice", at=now - WINDOW_SECONDS + 3600, path=self.db)
+        record_start("alice", at=now - 3600, path=self.db)
+        row = summarize(["alice"], 1.40, now=now, path=self.db)[0]
+        self.assertEqual(row["hours_all"], 3)
+        self.assertEqual(row["chip_hours_all"], 9)
+        self.assertEqual(row["hours_30d"], 2)
+        self.assertEqual(row["chip_hours_30d"], 5)
+        self.assertEqual(row["cost_all_usd"], 12.60)
+        self.assertEqual(row["cost_30d_usd"], 7)
+        self.assertEqual(row["active_chips"], 1)
+        self.assertEqual(estimated_cost("alice", 1.40, now=now, path=self.db), 12.60)
+
+    def test_four_chip_running_session_and_duplicate_start(self):
+        now = 2_000_000_000.0
+        record_start("alice", at=now - 3600, chips=4, path=self.db)
+        row = summarize(["alice"], 1.40, now=now, path=self.db)[0]
+        self.assertEqual(row["active"], 1)
+        self.assertEqual(row["active_chips"], 4)
+        self.assertEqual(row["cost_all_usd"], 5.60)
+        record_start("alice", at=now, chips=1, path=self.db)
+        row = summarize(["alice"], 1.40, now=now + 3600, path=self.db)[0]
+        self.assertEqual(row["chip_hours_all"], 5)
+        self.assertEqual(row["active_chips"], 1)
+
+    def test_existing_ledger_migrates_history_as_one_chip(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY, username TEXT NOT NULL, "
+                       "server_name TEXT NOT NULL, started REAL NOT NULL, stopped REAL)")
+            db.execute("INSERT INTO sessions VALUES (1, 'alice', '', 0, 3600)")
+        self.assertEqual(estimated_cost("alice", 1.40, now=7200, path=self.db), 1.40)
+        record_start("alice", at=3600, chips=4, path=self.db)
+        self.assertEqual(estimated_cost("alice", 1.40, now=7200, path=self.db), 7)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute("SELECT chips FROM sessions ORDER BY id").fetchall(), [(1,), (4,)])
+
+    def test_advanced_grants_default_denied_persist_and_revoke(self):
+        self.assertEqual(advanced_users(path=self.db), set())
+        set_advanced_access("alice", True, path=self.db)
+        set_advanced_access("alice", True, path=self.db)
+        set_advanced_access("bob", True, path=self.db)
+        self.assertEqual(advanced_users(path=self.db), {"alice", "bob"})
+        set_advanced_access("alice", False, path=self.db)
+        self.assertEqual(advanced_users(path=self.db), {"bob"})
+        for invalid in (None, 1, "true", [], {}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                set_advanced_access("alice", invalid, path=self.db)
+
+    def test_invalid_chip_counts_are_not_recorded(self):
+        for chips in (0, -1, True, 1.5, "4"):
+            with self.subTest(chips=chips), self.assertRaises(ValueError):
+                record_start("alice", chips=chips, path=self.db)
+        self.assertEqual(open_sessions(path=self.db), [])
 
 
 if __name__ == "__main__":

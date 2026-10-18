@@ -4,10 +4,12 @@
 # This configuration enforces strict Pod Security Standards, non-root execution,
 # NetworkPolicies for isolation, and gVisor sandboxing for untrusted notebooks.
 #
-# Every student and TA gets one v5e chip in the notebook pod. A chip remains
-# allocated for the lifetime of that pod, so the idle culler is important.
+# Enabled profiles use one or four chips for the lifetime of the notebook pod.
 
 hub:
+  extraEnv:
+    # scripts/03_deploy_hub.sh supplies the selection from config.env.
+    TPU_ENABLED_TOPOLOGIES: "1x1"
   db:
     pvc:
       storage: 32Gi
@@ -439,7 +441,9 @@ singleuser:
     tag: "latest"
 
   profileList:
-    - display_name: "TPU v5e notebook"
+    # Preserve the original slug for saved selections; usage_tracker filters access.
+    - slug: tpu-v5e-notebook
+      display_name: "TPU v5e notebook — 1 chip"
       description: >-
         One v5e TPU chip attached to your Jupyter notebook for the entire session.
         The same environment is available to students and TAs.
@@ -456,6 +460,29 @@ singleuser:
         node_selector:
           cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
           cloud.google.com/gke-tpu-topology: 1x1
+        tolerations:
+          - key: google.com/tpu
+            operator: Exists
+            effect: NoSchedule
+    - slug: tpu-v5e-4
+      display_name: "Advanced TPU v5e notebook — 4 chips"
+      description: >-
+        Four connected v5e TPU chips on one host (2x2 topology) for JAX sharding
+        and parallel training. Uses four times the TPU quota and estimated TPU cost
+        of the default profile while running. Stop your current server before
+        changing profiles; your home files persist.
+      kubespawner_override:
+        cpu_limit: 16
+        cpu_guarantee: 8
+        mem_limit: "64G"
+        mem_guarantee: "32G"
+        extra_resource_guarantees:
+          google.com/tpu: "4"
+        extra_resource_limits:
+          google.com/tpu: "4"
+        node_selector:
+          cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+          cloud.google.com/gke-tpu-topology: 2x2
         tolerations:
           - key: google.com/tpu
             operator: Exists
