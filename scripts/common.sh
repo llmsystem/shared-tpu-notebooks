@@ -34,6 +34,7 @@ REGION="${REGION:-us-west4}"
 CLUSTER="${CLUSTER:-tpu-notebooks}"
 NAMESPACE="${NAMESPACE:-${NS:-llmsys}}"
 MAX_TPU_NOTEBOOKS="${MAX_TPU_NOTEBOOKS:-20}"
+TPU_ENABLED_TOPOLOGIES="${TPU_ENABLED_TOPOLOGIES-1x1}"
 
 # Retained only for the queued-Job prototype scripts, not the deployment path.
 STUDENTS="${STUDENTS:-40}"
@@ -100,6 +101,29 @@ log_error() {
 # ------------------------------------------------------------------------------
 # 4. Prerequisites & Environment Verification
 # ------------------------------------------------------------------------------
+configure_tpu_topologies() {
+  # Normalize separators to spaces so Helm does not split the value on commas.
+  ENABLED_TPU_TOPOLOGIES=()
+  read -r -a ENABLED_TPU_TOPOLOGIES <<< "${TPU_ENABLED_TOPOLOGIES//,/ }"
+  if [[ ${#ENABLED_TPU_TOPOLOGIES[@]} -eq 0 ]]; then
+    log_error "TPU_ENABLED_TOPOLOGIES must enable 1x1, 2x2, or both."
+    exit 1
+  fi
+  local topology seen=" "
+  for topology in "${ENABLED_TPU_TOPOLOGIES[@]}"; do
+    case "${topology}" in
+      1x1|2x2) ;;
+      *) log_error "Unsupported TPU topology '${topology}'; use 1x1, 2x2, or 1x1,2x2."; exit 1 ;;
+    esac
+    if [[ "${seen}" == *" ${topology} "* ]]; then
+      log_error "Duplicate TPU topology '${topology}'."
+      exit 1
+    fi
+    seen+="${topology} "
+  done
+  TPU_ENABLED_TOPOLOGIES="${ENABLED_TPU_TOPOLOGIES[*]}"
+}
+
 require_project() {
   if [[ -z "${PROJECT}" ]]; then
     log_error "PROJECT is not set."

@@ -7,7 +7,8 @@
   <p class="text-body-secondary">
     Notebook server time includes idle time. Costs are estimates for the attached TPU
     and exclude storage, shared resources, and Cloud Billing adjustments. Tracking
-    begins when this feature is deployed.
+    begins when this feature is deployed. Four-chip sessions count all four chips
+    toward your estimated cost and budget.
   </p>
   <p id="my-usage-status" role="status">Loading usage…</p>
   <dl class="row d-none" id="my-usage-details">
@@ -33,7 +34,7 @@
       return response.json();
     })
     .then(({ usage }) => {
-      document.getElementById('my-usage-active').textContent = String(usage.active);
+      document.getElementById('my-usage-active').textContent = `${usage.active} (${usage.active_chips} TPU chips)`;
       document.getElementById('my-usage-30d').textContent =
         `${hours.format(usage.hours_30d)} hours · ${money.format(usage.cost_30d_usd)} estimated`;
       document.getElementById('my-usage-all').textContent =

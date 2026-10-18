@@ -1,0 +1,4 @@
+# Match scripts/03_deploy_hub.sh's JupyterHub chart 4.4.1.
+jupyterhub==5.5.1
+jupyterhub-kubespawner==7.1.0
+PyYAML==6.0.3

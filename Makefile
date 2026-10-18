@@ -6,6 +6,7 @@ REGION ?= us-west4
 CLUSTER ?= tpu-notebooks
 NAMESPACE ?= llmsys
 MAX_TPU_NOTEBOOKS ?= 40
+TPU_ENABLED_TOPOLOGIES ?= 1x1
 TPU_HOURLY_USD ?= 1.40
 STUDENT_TPU_BUDGET_USD ?= 150
 DOMAIN ?=
@@ -15,7 +16,7 @@ TA_GROUP ?=
 ADMIN_USERS ?=
 TEST_ACCOUNTS ?=
 
-export PROJECT REGION CLUSTER NAMESPACE MAX_TPU_NOTEBOOKS TPU_HOURLY_USD STUDENT_TPU_BUDGET_USD DOMAIN HUB_CERT_NAME STUDENT_GROUP TA_GROUP ADMIN_USERS TEST_ACCOUNTS
+export PROJECT REGION CLUSTER NAMESPACE MAX_TPU_NOTEBOOKS TPU_ENABLED_TOPOLOGIES TPU_HOURLY_USD STUDENT_TPU_BUDGET_USD DOMAIN HUB_CERT_NAME STUDENT_GROUP TA_GROUP ADMIN_USERS TEST_ACCOUNTS
 
 .PHONY: check preflight image cluster hub smoke iap demo expand-pvcs expand-pvcs-dry-run clean-pvcs clean-pvcs-dry-run teardown help
 
@@ -68,7 +69,7 @@ help:
 	@echo "  make image          Build and push the Jupyter + JAX TPU image"
 	@echo "  make cluster        Create Autopilot cluster, namespace, storage, and TPU quota"
 	@echo "  make hub            Deploy JupyterHub for students and TAs"
-	@echo "  make smoke          Run a TPU smoke Pod with the notebook image"
+	@echo "  make smoke          Test each topology enabled in config.env"
 	@echo "  make iap            Configure HTTPS and Google Identity-Aware Proxy"
 	@echo "  make clean-pvcs-dry-run / clean-pvcs   Preview or remove home disks"
 	@echo "  make teardown       Delete the cluster and static IP"
